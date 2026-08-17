@@ -1,0 +1,41 @@
+{
+  "name": "nyc-eo-explorer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Static explorer for the NYC mayoral executive orders corpus, powered by DuckDB-WASM over Parquet",
+  "scripts": {
+    "data": "node scripts/build-data.mjs",
+    "predev": "node scripts/ensure-data.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/ensure-data.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.32.0",
+    "dompurify": "^3.4.13",
+    "marked": "^15.0.12",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@duckdb/node-api": "^1.5.5-r.4",
+    "@eslint/js": "^9.39.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.4.2",
+    "vite": "^6.0.11",
+    "vitest": "^3.0.0"
+  }
+}

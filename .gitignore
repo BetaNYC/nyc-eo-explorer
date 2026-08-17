@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+
+# Generated from the sibling nyc-executive-orders checkout by `npm run data`.
+# Not committed: it is a derived artifact, and the corpus it comes from is
+# still changing (Phase E OCR is in progress upstream).
+public/data/
+
+.DS_Store
+*.log

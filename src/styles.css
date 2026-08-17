@@ -1,0 +1,1008 @@
+/* Design tokens carried over from the sibling repo's qa-ui, so the two apps
+   read as one project. Chart colors validated with the dataviz palette script:
+   #1f77b4 / #b8860b pass lightness, chroma, CVD separation, normal-vision
+   separation and contrast on this surface. */
+:root {
+  --bg: #f6f6f4;
+  --panel: #fff;
+  --line: #dcdcd6;
+  --ink: #1e1e1c;
+  --muted: #6d6d66;
+  --accent: #1f77b4;
+  --accent-soft: #e3eef7;
+  --ok: #2e7d54;
+  --skip: #b8860b;
+  --error: #c0392b;
+  --mark: #fdf0c4;
+  color-scheme: light;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---------- shell ---------- */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar h1 {
+  font-size: 17px;
+  margin: 0;
+  font-weight: 650;
+}
+
+.topbar .sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tabs {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.tabs button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tabs button[aria-current="page"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  align-items: flex-start;
+}
+
+.rail {
+  width: 260px;
+  flex: none;
+  position: sticky;
+  top: 20px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 10px;
+  font-weight: 650;
+}
+
+/* ---------- search ---------- */
+
+.searchbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.searchbar input[type="search"] {
+  flex: 1;
+  min-width: 240px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+
+.searchbar input[type="search"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.modes {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.modes button {
+  background: none;
+  border: none;
+  padding: 9px 12px;
+  cursor: pointer;
+  color: var(--muted);
+  border-right: 1px solid var(--line);
+}
+
+.modes button:last-child {
+  border-right: none;
+}
+
+.modes button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.modes button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: -6px 0 14px;
+}
+
+/* ---------- facets ---------- */
+
+.facet {
+  margin-bottom: 16px;
+}
+
+.facet h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.facet label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.facet label .n {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+
+.years {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.years input {
+  width: 72px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.clear {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--muted);
+  width: 100%;
+}
+
+/* ---------- results ---------- */
+
+.resulthead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.result {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+
+.result .rtop {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.result a.id {
+  font-weight: 650;
+  color: var(--accent);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.result a.id:hover {
+  text-decoration: underline;
+}
+
+.result .title {
+  flex: 1;
+  min-width: 200px;
+}
+
+.result .title.untitled {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.result .meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-top: 3px;
+}
+
+.snippet {
+  margin-top: 7px;
+  font-size: 13.5px;
+  color: #3a3a36;
+  line-height: 1.55;
+}
+
+mark {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.badge.eeo {
+  border-color: var(--skip);
+  color: var(--skip);
+}
+
+.badge.q-needs-review,
+.badge.q-no-text {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.badge.q-minor-noise {
+  border-color: var(--skip);
+  color: var(--skip);
+}
+
+/* ---------- detail ---------- */
+
+/* The detail title is a document heading, not one of the small uppercase
+   section labels `.panel h2` styles, so it must opt out of those. */
+.detail .panel h2:first-child {
+  margin: 0 0 4px;
+  font-size: 20px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.back {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 12px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  font-size: 14px;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.texthead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.texthead h2 {
+  margin: 0;
+}
+
+.modes.small {
+  margin-left: auto;
+}
+
+.modes.small button {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.fulltext {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+/* Rendered Markdown reads as a document, not as a code dump: proportional
+   type, real headings, and tables that look like the tables they came from. */
+.fulltext.markdown {
+  white-space: normal;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.fulltext.markdown > :first-child {
+  margin-top: 0;
+}
+
+.fulltext.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.fulltext.markdown h1 {
+  font-size: 19px;
+}
+
+.fulltext.markdown h2 {
+  font-size: 16px;
+}
+
+.fulltext.markdown h3 {
+  font-size: 15px;
+}
+
+.fulltext.markdown h1,
+.fulltext.markdown h2,
+.fulltext.markdown h3,
+.fulltext.markdown h4 {
+  /* Override the uppercase section-label treatment `.panel h2` applies. */
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  font-weight: 650;
+  margin: 1.4em 0 0.5em;
+  line-height: 1.3;
+}
+
+.fulltext.markdown p {
+  margin: 0 0 0.9em;
+}
+
+.fulltext.markdown ul,
+.fulltext.markdown ol {
+  margin: 0 0 0.9em;
+  padding-left: 1.6em;
+}
+
+.fulltext.markdown table {
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  font-size: 13.5px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.fulltext.markdown th,
+.fulltext.markdown td {
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.fulltext.markdown th {
+  background: var(--bg);
+  font-weight: 620;
+}
+
+.fulltext.markdown em {
+  color: var(--muted);
+}
+
+.fulltext.markdown hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1.2em 0;
+}
+
+.fulltext.markdown a {
+  color: var(--accent);
+}
+
+.edge {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.edge:last-child {
+  border-bottom: none;
+}
+
+.edge .verb {
+  font-weight: 600;
+  min-width: 84px;
+}
+
+.edge .unresolved {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ---------- side-by-side PDF ---------- */
+
+.sxs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Grid items are min-content-sized by default, so a wide OCR table would push
+   the column past its share instead of scrolling inside it. */
+.sxs > * {
+  min-width: 0;
+}
+
+.pdfpane {
+  margin: 0;
+  min-width: 0;
+}
+
+.pdfnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.pdfnav button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 2px 9px;
+  line-height: 1.5;
+}
+
+.pdfnav button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.pdfnav input {
+  width: 5em;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.pdfnav .muted {
+  color: var(--muted);
+}
+
+.pdfpages {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pagechip {
+  font-variant-numeric: tabular-nums;
+}
+
+.pagechip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pdfzoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.pdfzoom button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pdfzoom button:nth-child(2) {
+  min-width: 4.2em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* pdf.js's PDFViewer measures against an absolutely positioned container, so
+   the stage owns the height and the scroll container fills it. Page styling
+   (borders, shadows, canvas sizing) comes from pdf_viewer.css, not from here.
+   The height matches `.fulltext`'s max-height so the two panes line up rather
+   than one running past the other. */
+.pdfstage {
+  position: relative;
+  height: 70vh;
+}
+
+.pdfscroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.pdfloading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.pdfmissing {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pdfmissing p {
+  margin: 0 0 8px;
+}
+
+.pdfpane figcaption {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.pdfpane code {
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+/* A scan and a transcription stacked in one column is not side by side, so the
+   narrow layout keeps the text and lets the PDF follow it. */
+@media (max-width: 900px) {
+  .sxs {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- pictures ---------- */
+
+.pics-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -4px 0 12px;
+}
+
+.pics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pic {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  max-width: 220px;
+}
+
+/* The crops are wildly different shapes -- a signature is a wide ribbon, a
+   seal is nearly square -- so they are boxed to a common height and left to
+   find their own width rather than stretched to a grid. */
+.pic img {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  margin: 0 auto 8px;
+  object-fit: contain;
+}
+
+.pic figcaption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.pic .muted {
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.badge.pic-seal {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.badge.pic-sig {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* ---------- picture gallery ---------- */
+
+/* The detail view's .pics is a flex row of however few crops one order has.
+   The gallery is hundreds, so it wants a real grid -- and auto-fill rather than
+   a fixed column count, because this pane is half the width when the facet rail
+   is up. */
+.picgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.picgrid .pic {
+  max-width: none;
+}
+
+.pictypes {
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+
+.pictypes .n {
+  margin-left: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pictypes button[aria-pressed="true"] .n {
+  color: inherit;
+}
+
+/* The crop is the control. Stripped of button chrome so the grid still reads as
+   a sheet of pictures, but it stays a real <button> -- it is keyboard-reachable
+   and screen-reader-announced, which a click handler on the <img> would not be. */
+.cropbtn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 4px;
+}
+
+.cropbtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.picorder {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.more {
+  display: block;
+  margin: 16px auto 0;
+  padding: 8px 16px;
+}
+
+/* ---------- lightbox ---------- */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 62%);
+}
+
+.lbinner {
+  position: relative;
+  max-width: min(92vw, 900px);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.lbfig {
+  margin: 0;
+}
+
+/* The point of the overlay is the crop at its own size, so this is deliberately
+   NOT the grid's max-height: a signature ribbon is unreadable at 120px. It is
+   still bounded, because a seal scanned at 300 dpi is taller than the viewport. */
+.lbfig img {
+  display: block;
+  max-width: 100%;
+  max-height: 62vh;
+  margin: 0 auto 12px;
+  object-fit: contain;
+}
+
+.lbcap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.lbtitle {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
+.lbclose {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.lbnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+/* ---------- charts ---------- */
+
+.chartwrap {
+  overflow-x: auto;
+}
+
+.chart-title {
+  font-size: 15px;
+  font-weight: 620;
+  margin: 0 0 2px;
+}
+
+.chart-note {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.barrow {
+  display: grid;
+  grid-template-columns: 130px 1fr max-content;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+/* display:block is required, not cosmetic: these are <span>s, and an inline
+   element ignores width/height, so the fill would collapse to nothing. */
+.bartrack {
+  display: block;
+  background: #ececea;
+  border-radius: 4px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.barfill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.barval {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 48px;
+  text-align: right;
+}
+
+.meter {
+  margin-bottom: 12px;
+}
+
+.meter .mlabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13.5px;
+  margin-bottom: 4px;
+}
+
+.meter .mtrack {
+  background: #ececea;
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.meter .mfill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+/* ---------- status ---------- */
+
+.status {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 13.5px;
+  margin-bottom: 14px;
+}
+
+.status.err {
+  background: #fdecea;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.progress {
+  height: 4px;
+  background: #d6e6f3;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 7px;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 28px 0;
+  text-align: center;
+}
+
+@media (max-width: 820px) {
+  .main {
+    flex-direction: column;
+  }
+  .rail {
+    width: 100%;
+    position: static;
+  }
+}
