@@ -1,10 +1,14 @@
 # nyc-eo-explorer
 
+> 🚧 **Work in progress.** The explorer is usable today, but the corpus underneath it is still being refined — text quality, metadata, and coverage are all in motion upstream, and data shapes may change with them. Nothing here should yet be treated as a complete or authoritative record. [Issues](../../issues) and contributions welcome.
+
 A fully static explorer for the [NYC mayoral executive orders corpus](https://github.com/BetaNYC/nyc-executive-orders)
 — search, filter, and browse the full corpus in the browser, with **no server and no API**.
 
 Queries run in the browser: [DuckDB-WASM](https://duckdb.org/docs/current/clients/wasm/overview)
 executes real SQL over Parquet files served as static assets.
+
+Vibe coded with [Claude](https://claude.ai) by [BetaNYC](https://beta.nyc).
 
 **Deployed to GitHub Pages** from `main` by
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): the corpus repo is
@@ -47,214 +51,91 @@ corpus changed upstream, so those two commands are the whole setup. No Python, n
 
 ## How it works
 
-### Data
+The corpus repo publishes executive orders as Markdown and JSON. That's the right
+format for reading, diffing, and archiving, and the wrong one for searching 2,300
+documents in a browser. This app translates it into something queryable, then does
+the querying client-side.
 
-`scripts/build-data.mjs` reads the sibling repo's `corpus/*.json` and writes five
-files into `public/data/` (gitignored — they are derived artifacts):
+**1. Build.** `npm run data` reads the sibling corpus repo and rewrites it as
+[Parquet](https://parquet.apache.org/) — a compact columnar format DuckDB can read
+efficiently — in `public/data/`. Those files are derived artifacts: gitignored, and
+rebuilt whenever the corpus changes upstream.
 
-| File                         | Size    | Contents                                                                    |
-| ---------------------------- | ------- | --------------------------------------------------------------------------- |
-| `eo_meta.parquet`            | ~80 KB  | The 21 locked frontmatter fields + `char_count` + page provenance. No text. |
-| `eo_text.parquet`            | ~1.7 MB | `eo_id` + full text. ~9 MB of text, zstd-compressed.                        |
-| `supersession_edges.parquet` | ~4 KB   | Flat `{actor, target, verb, source, partial}` edges.                        |
-| `pictures.json`              | ~150 KB | Phase E picture crops grouped by `eo_id`. Empty if the side-car hasn't run. |
-| `manifest.json`              | ~1 KB   | Counts, year range, file digests, `generated_at`.                           |
+| File                         | Size    | Contents                                          |
+| ---------------------------- | ------- | ------------------------------------------------- |
+| `eo_meta.parquet`            | ~80 KB  | One row per order: dates, mayor, title, flags     |
+| `eo_text.parquet`            | ~1.7 MB | The full text of every order (~9 MB, compressed)  |
+| `supersession_edges.parquet` | ~4 KB   | Which orders revoked or amended which             |
+| `pictures.json`              | ~150 KB | Seals and signatures clipped out of the old scans |
+| `manifest.json`              | ~1 KB   | Counts, year range, checksums                     |
 
-The **meta/text split is the loading strategy**: the browse UI, all facets, and
-every analytics chart run off the 50 KB file, and the megabyte of text is not
-fetched until you actually search or open an order.
+Metadata and text are split because most of the app never needs the text. Browsing,
+filtering, and the charts run off the 80 KB file; the megabyte of text is fetched the
+first time you search or open an order.
 
-Three details in the builder are load-bearing rather than incidental:
+**2. Serve.** Everything is a static file. There is no server, no API, and no
+database to run — `npm run build` produces a directory, and GitHub Pages hosts it.
 
-- **Column types are declared, never inferred.** `admin_note` is 100% NULL today,
-  `in_effect` has no `true` values, and `number` holds `"001"`, `"23"` and `"1.37"`
-  alike — inference gets all three wrong, and `"001"` becoming `1` is silent
-  data loss. The type table mirrors `build_corpus.FRONTMATTER_FIELDS` upstream.
-- **`full_text_raw` is stored as NULL when identical to `full_text`** (true for
-  ~87% of records). The app coalesces on read.
-- **`ROW_GROUP_SIZE 512` on the text file.** DuckDB's default is 122,880 rows, which
-  would put the whole corpus in one row group and make ranged reads prune nothing.
+**3. Query.** [DuckDB-WASM](https://duckdb.org/docs/current/clients/wasm/overview)
+runs in the browser and executes real SQL against those Parquet files, pulling them
+over HTTP a chunk at a time rather than downloading everything up front. Every
+search, facet count, and chart in the app is a SQL query. The engine is ~7 MB
+compressed, which is the largest single cost in the design and the reason it loads
+once and is shared across the whole app.
 
-Pre-1974 inputs (`eo_pre1974.json`, `pre1974_provenance.json`) are **optional** —
-that corpus is still being produced by the upstream Phase E OCR pipeline. The
-builder picks them up automatically when they appear, and nothing parses `eo_id`
-as `EO|EEO`, because the pre-1974 era introduces `1951-EM-001`, `1972-AM-007`,
-and other series.
+The one thing not served from Pages is the scanned source PDFs — 1.1 GB of git-LFS
+files, too large to host there. Those are read from `media.githubusercontent.com`,
+pinned to the corpus commit the site was built from.
 
-**Page provenance.** A pre-1974 order is a few pages of a 400-page bound volume
-scan, so `eo_meta` carries `source_page_start` (INTEGER) and `source_pages`
-(INTEGER[]), joined in from `pre1974_provenance.json` — the locked frontmatter
-has no room for them upstream, by design. The list, not a first..last range, is
-authoritative: 153 records skip blank versos, so `1946-EO-D0916` is pages 44, 46,
-48, 50 and a range would claim three pages it is not on. Both columns are NULL
-for all 2,291 orders from 1974 on, which each have a PDF of their own. The detail
-view shows the list and points the source link at `…#page=<start>`.
+### Search
 
-`source_page_total` joins on alongside them — how many pages the whole volume
-has, so the detail view can say "pages 44, 46, 48, 50 of 204 in the scanned
-volume". It is counted from the committed per-page OCR output (one
-`page_NNNN.json` per page, blanks included, so the count is the PDF's page count
-— 204 either way on the O'Dwyer volume), because this script has to run without
-the git-LFS PDFs present. Not to be confused with `page_count`, which is the
-**order's** length: `1946-EO-D0916` is 4 pages inside that 204-page volume.
+The corpus is heavily OCR'd — about a fifth of orders are flagged as noisy, and 67
+have no recoverable text at all — so a word index is the wrong default:
+`Adminstration` will never match `administration`. Three modes are offered as equals
+instead.
 
-**Pictures (local dev only).** Upstream's `scripts/run_picture_clips.py` cuts every
-region the OCR tagged `Picture` back out of the volume PDFs — city seals, mayoral
-signatures, the odd real figure — all of which the corpus text throws away. The
-builder joins that side-car's `vlm-pics/manifest.json` to page provenance on
-`(pdf_path, page)` and writes `pictures.json` as `eo_id → [{image, tag, page}]`,
-so an order gets the pictures that were physically on its pages. A page shared by
-two orders gives its crops to both; crops on index and furniture pages belong to
-no record and are counted as orphans in the build log rather than dropped
-silently. The `seal` / `sig` tags are **upstream heuristics on shape, size,
-position and ink density**, not model output — dots.ocr has one `Picture`
-category and nothing finer — so the detail view labels them as guesses and keeps
-`null` ("untagged") as a distinct third answer.
+| Mode                | What it does                               | Notes                     |
+| ------------------- | ------------------------------------------ | ------------------------- |
+| **Exact** (default) | Plain substring match, case-insensitive    | Always available          |
+| **Regex**           | Full regex — e.g. `admin[il1]strat[il1]on` | For working around OCR    |
+| **Relevance**       | BM25 ranking via DuckDB's full-text search | Opt-in; downloads ~480 KB |
 
-**The Pictures tab** goes the other direction from that panel: instead of "what
-is on this order's pages", it answers "show me the crops from every order whose
-text matches" — search `robert moses` and you get the seals and signatures from
-each of the three orders that name him. That join is the feature, because the
-text lives on the order and the pixels live on the page.
+Relevance needs an extension that isn't built into duckdb-wasm, so selecting it
+fetches one at runtime. If that fails, search falls back to the other two modes
+rather than breaking.
 
-It is real SQL like everything else. `pictures.json` is nested (`eo_id → [crop]`),
-so `ensurePictures()` flattens it in JS and hands DuckDB one newline-delimited
-record per crop; the resulting `pictures` table joins onto whatever
-`buildSearchQuery` already matched. Doing it that way rather than intersecting
-`eo_id`s in JS is what makes the counts exact and the type facet possible — a
-client-side join would need a row cap and would under-report as the corpus grows.
-The tab shares `q`, the Exact/Regex/Relevance toggle and the facet rail with the
-Search tab, so crossing between them keeps your query; the rail's counts join
-`pictures` there, or it would offer 400 Giuliani orders and deliver no crops.
-The type filter keeps `null` as a **third** option ("untagged", 469 of 2,137),
-not as a synonym for "neither seal nor signature", and each crop opens full size
-— a signature is a wide ribbon and illegible at thumbnail height.
+### Reading an order
 
-The crops are copied into `public/pics/` by `npm run data`, out of the data repo's
-committed `vlm-pics-web/` — the same crops as its gitignored 300 dpi `vlm-pics/`
-PNGs, re-encoded to JPEG q85 by `scripts/build_web_crops.py` there. That takes the
-set from 472 MB to 53 MB, which is what makes it possible to just *be* part of the
-site rather than something served from elsewhere: dev and production load the same
-URLs, and the picture layer costs no LFS bandwidth at all. `EO_PICS_DIR=/path`
-points at another tree, and a checkout with only the PNGs falls back to those.
-Rebuild after clipping another volume — `npm run dev` does it for you, the picture
-manifest is one of the staleness triggers `ensure-data.mjs` watches. A crop that is
-somehow missing degrades to its alt text rather than a broken-image icon.
+The detail view shows the transcribed text next to the scan it came from. The text is
+Markdown-ish — the OCR emits headings, emphasis, and HTML tables — so it renders
+through `marked` and is sanitized with `DOMPurify`, with a **Rendered / Raw** toggle
+because anyone checking a transcription against the scan needs the characters as
+stored.
 
-**The source PDFs, side by side.** A record's own `pdf_path` is the URL under
-either base, so nothing guesses a location. In dev a mount in `vite.config.js`
-serves the scans at `/pdf/<repo-relative path>` rooted at the data repo itself
-(`EO_REPO_DIR=/path` to point elsewhere); a deployed build reads them from
-`VITE_MEDIA_BASE` instead. The detail view's **Text only / Side by
-side** toggle puts the scan next to the transcription, in **pdf.js's own viewer
-component** (`pdfjs-dist/web/pdf_viewer.mjs` — the viewer Firefox's built-in
-reader is built on). It arrives on the order's first page: page 49 of a
-334-page volume, not page 1 of it.
+The scan is displayed with pdf.js's own viewer component, which brings continuous
+scroll, text selection, and fit-to-width along with it. Pre-1974 orders are a few
+pages inside a scanned bound volume, so the viewer opens on the order's first page
+(page 49 of 334, not page 1) and the toolbar lists the specific pages that order
+occupies — they aren't always contiguous, since the volumes have blank versos.
 
-Using that component rather than an `<iframe>` or a hand-rolled canvas loop is
-the whole design. It brings continuous scroll, lazy per-page rendering, HiDPI
-canvases, text selection and fit-to-width for free, and it fires `pagechanging`,
-so the pager's page number **tracks scrolling** — an `<iframe>` can't do that
-(its scroll position is a plugin's, unreadable from the page) and a hand-rolled
-one has to reimplement it. It also takes page geometry from each page's own
-MediaBox, which matters more than it sounds: these are photographs of a bound
-book, and the O'Dwyer volume has **117 distinct page sizes across 204 pages**.
-There is no document-level page size to lean on.
+Those old volumes are also where `pictures.json` comes from: the OCR tags regions of
+each page as pictures — city seals, mayoral signatures — and upstream clips them out
+of the scans, since none of it survives in the text. The build matches each clip to
+whichever order was printed on that page. The **Pictures tab** turns that around and
+searches by text to show images: look up `robert moses` and you get the seals and
+signatures from the three orders that name him.
 
-The toolbar around it is thin on purpose: `‹ Page [n] of N ›`, a zoom stepper
-whose middle button is the fit-width reset, and a chip per page **this order**
-occupies — a volume-derived order is a handful of scattered pages, not a range.
-pdf.js is code-split (`lazy()`), so its ~600 KB and 1.2 MB worker load when
-someone opens the pane, not on every page load.
+### Gotchas worth knowing
 
-One non-obvious thing, and the source of a fixed bug worth not reintroducing:
-**the opening jump waits for `viewer.pagesPromise`.** At `pagesinit` pdf.js has
-built every page view from page 1's viewport as a placeholder, and only swaps in
-each page's real geometry as `getPage` resolves (`pdf_viewer.mjs`, the loop
-after `#onePageRenderedOrForceFetch`). On a volume with 117 different page sizes
-that means jumping at `pagesinit` scrolls by page-1-sized placeholders — landing
-on the wrong page, at a scale the canvases then resize out from under. Waiting,
-then re-applying `page-width`, fixes both. The zoom button also reads "Fit"
-rather than a percentage while fitting: pdf.js scales relative to 72 dpi points,
-so an exact page-width fit reports as ~57% and reads like a bug.
-
-The dev mount refuses anything outside its root or with the wrong extension — it
-reads paths off a URL and is rooted at a whole repository. It also answers **range
-requests**, which is load-bearing rather than polite: a bound volume is ~49 MB, and
-without ranges the viewer downloads all of it before showing anything.
-
-Deployed, the scans come from **`media.githubusercontent.com`** — the one GitHub
-host that resolves a git-LFS pointer to the file behind it, since Pages serves the
-pointer itself and could not hold 1.1 GB regardless. The deploy pins the URL to the
-commit it read the corpus from, so a later upstream push cannot change the documents
-under a live page.
-
-Ranges are load-bearing there too, and pdf.js will not use them on its own: CORS
-does not expose `Accept-Ranges` to a cross-origin reader, so its own negotiation
-concludes the host has none and streams whole volumes. `PdfViewer` therefore
-supplies a `PDFDataRangeTransport` that asserts what the detection cannot observe,
-sizing the file from a HEAD (`Content-Length` *is* exposed) and fetching explicit
-`bytes=N-M` ranges. If a scan fails to load anyway, the pane offers the City's own
-copy — the same link the metadata table carries.
-
-### The engine
-
-DuckDB-WASM is bundled locally (Vite `?url` imports), not loaded from a CDN, so
-it works offline and on any host. Only the `eh` bundle ships: `coi` needs
-COOP/COEP headers that GitHub Pages cannot set, and `mvp` costs another 39 MB to
-serve pre-2022 browsers.
-
-The engine is **6.8 MB brotli / 7.6 MB gzip** (34 MB raw) — the single largest
-cost in the design. It is therefore instantiated as a module-scope singleton
-outside React's lifecycle (`src/duckdb/store.js`), read via `useSyncExternalStore`.
-A `useEffect` that instantiates on mount and terminates on cleanup would
-instantiate _twice_ under StrictMode and race a dead worker.
-
-### Search — three modes, deliberately peers
-
-The corpus is heavily OCR'd -- roughly a fifth of orders are flagged
-`needs-review` or `minor-noise`, and 67 have no recoverable text at all -- so a
-stemmed word index is the wrong default: `Adminstration` will never match
-`administration`.
-
-| Mode                | How                                                         | When it's available       |
-| ------------------- | ----------------------------------------------------------- | ------------------------- |
-| **Exact** (default) | `contains()` over a precomputed lowercase column            | As soon as the text loads |
-| **Regex**           | `regexp_matches(..., 'is')` — e.g. `admin[il1]strat[il1]on` | Same                      |
-| **Relevance**       | BM25 via DuckDB's `fts` extension                           | Opt-in, see below         |
-
-**Note on Relevance:** `fts` is _not_ statically linked into duckdb-wasm. Selecting
-that mode triggers an `INSTALL`, which fetches ~480 KB from `extensions.duckdb.org`
-at runtime. That is why it is opt-in rather than the default, and why a failure to
-load degrades to the scan modes instead of breaking search.
-
-DuckDB's FTS has no `snippet()` (unlike SQLite FTS5), so excerpts and highlighting
-are built in JS (`src/search/snippet.js`) over only the rows on screen. Segments
-are returned as `{text, hit}` data and rendered as text nodes — never as an HTML
-string — so OCR'd text containing a literal `<script>` is displayed, not executed.
-
-### Rendering an order's text
-
-The body is Markdown-ish, not plain text. The Phase E VLM OCR emits `#`/`##`
-headings and emphasis (hundreds of orders have headings), and **raw `<table>`
-HTML** for tabular regions of a scan such as library date stamps. So the detail
-view renders it with `marked` + `DOMPurify` (`src/markdown.js`) and offers a
-**Rendered / Raw** toggle — the raw view matters because this is OCR output, and
-anyone checking a transcription against the scan needs the characters as stored.
-
-Two things there are load-bearing rather than stylistic:
-
-- **`breaks: true`**, unlike `qa-ui`'s renderer. qa-ui joins page elements with
-  blank lines; this corpus has ~30x more newlines than blank-line pairs, so
-  without it a numbered clause list and a signature block collapse into one
-  run-on paragraph. In a legal document the line structure is content.
-- **Raw `<table>` blocks are padded with blank lines before parsing.** Under
-  CommonMark an HTML block runs until the next _blank_ line, so a table would
-  otherwise swallow the entire rest of the document and emit it verbatim.
-
-HTML must be allowed through (the tables are real HTML) and therefore must be
-sanitized — this is untrusted scan output. Tests cover script tags, inline event
-handlers, `javascript:` URLs, and iframe/object embeds.
+- **Column types are written explicitly in the build script.** EO numbers are
+  strings — `"001"`, `"23"`, `"1.37"` — and left to guess, DuckDB turns `"001"` into
+  `1` and quietly loses data.
+- **The pre-1974 corpus is optional.** Upstream is still OCR'ing those volumes; the
+  build picks them up when they appear. Don't assume an `eo_id` is `EO` or `EEO` —
+  that era also has `1951-EM-001`, `1972-AM-007`, and others.
+- **Cross-origin range requests need help.** CORS hides `Accept-Ranges` from pdf.js,
+  so without the custom transport in `PdfViewer` it downloads entire 49 MB volumes
+  before showing a page.
 
 ## Testing
 
@@ -294,3 +175,56 @@ happens.
 Chart colors were validated for colorblind separation and contrast rather than
 chosen by eye. `text_quality` uses a sequential ramp because it is an _ordered_
 scale, not a set of identities.
+
+## Want to help?
+
+This is early-stage, openly built civic infrastructure — contributions to the app,
+its tests, or the corpus it reads are all welcome.
+
+```bash
+git clone https://github.com/BetaNYC/nyc-eo-explorer.git && cd nyc-eo-explorer
+npm install && npm run dev     # builds the Parquet artifacts first if they're stale
+npm test                       # unit + real-SQL integration
+```
+
+You need the [corpus repo](https://github.com/BetaNYC/nyc-executive-orders) checked
+out as a sibling directory (see [Requirements](#requirements)) — that is where the
+data comes from. Work on the **data itself** — OCR text, titles, metadata, coverage
+gaps — belongs upstream in that repo, which has its own review queue and open
+issues.
+
+**The one hard rule carries over from upstream:** never invent or guess at content.
+This app displays a public record; an empty or flagged field is correct, a plausible
+substitute is a bug. Nothing in the UI may present derived or guessed data as if it
+came from the source document.
+
+Questions, ideas, or a bug you've spotted: [open an issue](https://github.com/BetaNYC/nyc-eo-explorer/issues) or hello@beta.nyc.
+
+## Part of BetaNYC's civic data tools
+
+This explorer is one of a family of free, open civic data assets [BetaNYC](https://beta.nyc) builds and stewards:
+
+- [`nyc-executive-orders`](https://github.com/BetaNYC/nyc-executive-orders) — the corpus this app reads: an open, machine-readable archive of NYC mayoral executive orders, 1974–present.
+- [`ny-gov-web-registry`](https://github.com/BetaNYC/ny-gov-web-registry) — which NY government entities exist, and where they live on the web.
+- [`ny-gov-web-archiver`](https://github.com/BetaNYC/ny-gov-web-archiver) — the throttled Wayback Machine harvester behind the corpus's historical backfills.
+- [`nyc-boundaries`](https://github.com/BetaNYC/nyc-boundaries) — NYC administrative boundaries, mapped and queryable.
+- Seven MCP servers giving AI agents direct access to NYC/NYS civic data: [Council legislation](https://github.com/BetaNYC/nyc-council-mcp), [City Record](https://github.com/BetaNYC/nyc-record-mcp), [Checkbook spending](https://github.com/BetaNYC/nyc-checkbook-mcp), [311](https://github.com/BetaNYC/nyc-311-mcp), [Charter/Code/Rules](https://github.com/BetaNYC/nyc-charter-laws-rules), [NYS legislation](https://github.com/BetaNYC/nys-openlegislation-mcp), and the [Council budget](https://github.com/BetaNYC/New-York-City-Budget).
+
+## AI use in this project
+
+BetaNYC uses AI tools openly and with human accountability. This repository was built by AI agents (Anthropic's Claude) working under the direction and review of BetaNYC staff — the app code was written by AI, and the scope and design decisions are human-made.
+
+One commitment about the content: **the executive orders this app displays are not AI-generated.** Order text is served verbatim from the corpus, which retrieves it from official City sources and the Internet Archive — never summarized, paraphrased, or invented. The app renders and searches that text; it does not rewrite it. Where the corpus is incomplete or its OCR is imperfect, the UI says so rather than smoothing it over.
+
+Questions about our approach: hello@beta.nyc.
+
+## License
+
+- **Code** (this repository): [MIT](LICENSE) © 2026 BetaNYC — use and modify freely with attribution preserved.
+- **The data it displays** — the corpus, the source scans, and the picture crops — lives in [`nyc-executive-orders`](https://github.com/BetaNYC/nyc-executive-orders) under [Creative Commons Attribution-ShareAlike 4.0](https://github.com/BetaNYC/nyc-executive-orders/blob/main/LICENSE-DATA): reuse and adapt with credit to BetaNYC, and share adaptations under the same license.
+
+The underlying executive orders are public records of the City of New York; these licenses cover this tooling and the compilation it reads.
+
+## A note on sources
+
+Documents shown here are reproductions of public records, retrieved from official City sources and the [Internet Archive](https://archive.org) under its access guidelines. Text of the oldest orders is OCR output — faithful to the scan, not perfected — and is not legal advice; verify against the source PDF, which every record links to.
