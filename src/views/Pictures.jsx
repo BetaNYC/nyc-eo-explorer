@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import Lightbox from "../components/Lightbox.jsx";
 import { shortLabel } from "../data/labels.js";
-import { PICTURE_TAGS, cropUrl, tagKey, tagLabel } from "../data/pictures.js";
+import { PICTURE_TAGS, cropUrl, onCropError, tagKey, tagLabel } from "../data/pictures.js";
 import { ensurePictures, ensureText, query } from "../duckdb/store.js";
 import { parseQuery } from "../search/parseQuery.js";
 import {
@@ -189,6 +189,7 @@ export default function Pictures({ state, filters, hasText, hasPictures, onOpen,
                 loading="lazy"
                 src={cropUrl(p.image)}
                 alt={`${tagLabel(p.tag)}, volume page ${p.page}`}
+                onError={onCropError}
               />
             </button>
             <figcaption>

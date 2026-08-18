@@ -17,11 +17,14 @@
  *   eo_text.parquet            eo_id + full_text + full_text_raw (NULL when identical)
  *   supersession_edges.parquet flat {actor, target, verb, source, partial}
  *   pictures.json              OPTIONAL input, always written: the Phase E
- *                              picture crops (vlm-pics/manifest.json, default
- *                              $EO_PICS_DIR = ../nyc-executive-orders/vlm-pics)
- *                              grouped by eo_id. Empty when the side-car has
- *                              not been run.
+ *                              picture crops grouped by eo_id. Empty when the
+ *                              side-car has not been run.
  *   manifest.json              counts, sizes, generated_at, source digests
+ *
+ * And copies the crops themselves into public/pics/, from $EO_PICS_DIR --
+ * default ../nyc-executive-orders/vlm-pics-web, the committed JPEG derivative,
+ * falling back to the gitignored source PNGs in vlm-pics/ when a local checkout
+ * has those and not the other.
  *
  * The meta/text split is deliberate: the browse + facet + analytics UI paints
  * from the small file, and the multi-MB text is only fetched once the user
@@ -33,8 +36,8 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -152,6 +155,53 @@ async function sha256(path) {
   return createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
+}
+
+/**
+ * The crop tree to build from: the committed JPEG derivative if the data repo
+ * has one, else the gitignored source PNGs.
+ *
+ * Both are keyed by the same manifest, so the only difference downstream is the
+ * extension riding in each entry's `image` -- which nothing in the app parses.
+ */
+function pickPicsDir(corpusDir) {
+  const web = join(corpusDir, "..", "vlm-pics-web");
+  return existsSync(join(web, "manifest.json")) ? web : join(corpusDir, "..", "vlm-pics");
+}
+
+/**
+ * Copy the crops into public/, so the built site serves them itself.
+ *
+ * They used to be reached through a dev-server mount pointed at the sibling
+ * checkout, which meant the picture layer existed in dev and nowhere else. At
+ * JPEG q85 the whole set is ~53 MB -- small enough to just be part of the site,
+ * which is both simpler and cheaper than serving it cross-origin.
+ *
+ * Only the crops the manifest actually references are copied, so a stale PNG
+ * left behind by a retuned clipper run does not ride along into the build.
+ */
+async function copyCrops(picsDir, images, log) {
+  const outDir = join(REPO_ROOT, "public", "pics");
+  await rm(outDir, { recursive: true, force: true });
+  let copied = 0;
+  let bytes = 0;
+  let missing = 0;
+  for (const image of images) {
+    const src = join(picsDir, image);
+    if (!existsSync(src)) {
+      missing += 1;
+      continue;
+    }
+    const dst = join(outDir, image);
+    await mkdir(dirname(dst), { recursive: true });
+    await copyFile(src, dst);
+    bytes += (await stat(src)).size;
+    copied += 1;
+  }
+  log(
+    `crops:        ${copied} copied to public/pics/ (${(bytes / 1e6).toFixed(1)} MB)` +
+      (missing ? ` -- ${missing} listed in the manifest but absent on disk` : "")
+  );
 }
 
 async function main(argv) {
@@ -291,9 +341,16 @@ async function main(argv) {
   // and are counted as orphans, not silently dropped.
   //
   // JSON, not Parquet: this is a few hundred KB of pointers the detail view
-  // wants whole, and it must survive the crops themselves being absent (they
-  // are gitignored pixels, regenerable, and rendered on someone's GPU box).
-  const picsDir = resolve(process.env.EO_PICS_DIR || join(corpusDir, "..", "vlm-pics"));
+  // wants whole, and it must survive the crops themselves being absent (the
+  // upstream side-car may simply not have been run).
+  //
+  // `vlm-pics-web/` is the COMMITTED JPEG derivative upstream publishes for
+  // exactly this purpose; `vlm-pics/` is the 472 MB of gitignored source PNGs,
+  // which only exist on a machine that has run the clipper. Preferring the
+  // former is what lets a CI checkout of the data repo build a complete site,
+  // and the fallback is what keeps a local dev box working before anyone has
+  // run build_web_crops.py. Both carry the same manifest shape.
+  const picsDir = resolve(process.env.EO_PICS_DIR || pickPicsDir(corpusDir));
   const picsManifest = join(picsDir, "manifest.json");
   const hasPics = existsSync(picsManifest);
   const pictures = { by_eo: {}, count: 0, orphaned: 0, volumes: [] };
@@ -335,6 +392,13 @@ async function main(argv) {
       `pictures:     ${pictures.count} crops on ${Object.keys(pictures.by_eo).length} orders ` +
         `from ${pictures.volumes.length} volumes (${pictures.orphaned} on non-order pages)`
     );
+    // What by_eo references, not every crop in the manifest: an orphan sits on
+    // a page no order claims, so nothing in the app can ever render it, and
+    // shipping it would be dead weight in the site.
+    const referenced = new Set();
+    for (const crops of Object.values(pictures.by_eo))
+      for (const c of crops) referenced.add(c.image);
+    await copyCrops(picsDir, referenced, log);
   } else {
     log(`pictures:     absent (no manifest at ${picsManifest})`);
   }
@@ -426,7 +490,10 @@ async function main(argv) {
   const manifest = {
     generated_at: new Date().toISOString(),
     generator: "scripts/build-data.mjs",
-    corpus_dir: corpusDir,
+    // The basename only. The full path is whatever local checkout the build ran
+    // against, and this file is fetched by the browser on every page load --
+    // no reason to publish someone's home directory to do it.
+    corpus_dir: basename(corpusDir),
     schema_version: 1,
     record_count: total,
     edge_count: edgeCount,

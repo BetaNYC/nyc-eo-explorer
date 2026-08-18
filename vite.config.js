@@ -8,32 +8,29 @@ import { defineConfig } from "vite";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Serve files from the sibling data repo, LOCAL DEV ONLY:
+ * Serve the scanned source PDFs from the sibling data repo, LOCAL DEV ONLY:
  *
- *   /pics/<volume>/<file>.png   Phase E picture crops     vlm-pics/
  *   /pdf/<repo-relative>.pdf    the scanned source PDFs   <repo root>/
  *
- * Neither belongs in public/. The crops are gitignored regenerable pixels; the
- * PDFs are 3,184 git-LFS files and several GB, which is not something to copy
- * into a build. The app names both either way and degrades when a file 404s, so
- * a deployed build simply has no picture tiles and no side-by-side PDF -- the
- * text, the metadata and the upstream DORIS links are all still there.
+ * They do not belong in public/: 2,305 git-LFS files and 1.1 GB, which is not
+ * something to copy into a build, and well past what GitHub Pages will host. A
+ * deployed build reads them cross-origin from media.githubusercontent.com
+ * instead (VITE_MEDIA_BASE, see src/paths.js), which is the one GitHub endpoint
+ * that resolves an LFS pointer to its content. This mount is what keeps dev
+ * working offline and without that round trip.
  *
- * Override with EO_PICS_DIR=/path / EO_REPO_DIR=/path npm run dev.
+ * The crops used to be mounted here too. They are now copied into public/pics/
+ * by `npm run data` and served as ordinary site files, in dev and production
+ * alike -- 53 MB of JPEG is small enough to just be part of the site.
+ *
+ * Override with EO_REPO_DIR=/path npm run dev.
  */
-const picsRoot = path.resolve(
-  HERE,
-  process.env.EO_PICS_DIR || "../nyc-executive-orders/vlm-pics"
-);
 const repoRoot = path.resolve(HERE, process.env.EO_REPO_DIR || "../nyc-executive-orders");
 
 // `pdf_path` on a corpus record is repo-relative (`pdfs/1974/1974-EO-001.pdf`,
 // `sources/gpp/volumes/<stem>.pdf`), so the PDF mount is rooted at the repo and
 // the record's own path is the URL. Nothing rewrites or guesses a location.
-const MOUNTS = [
-  { prefix: "/pics/", root: picsRoot, ext: ".png", type: "image/png" },
-  { prefix: "/pdf/", root: repoRoot, ext: ".pdf", type: "application/pdf" },
-];
+const MOUNTS = [{ prefix: "/pdf/", root: repoRoot, ext: ".pdf", type: "application/pdf" }];
 
 const dataRepoMount = () => {
   const serve = (req, res, next) => {

@@ -702,6 +702,21 @@ mark {
   object-fit: contain;
 }
 
+/* A crop whose file is not there. Sized like the image it stands in for, so a
+   gallery with a few missing tiles keeps its rhythm rather than collapsing,
+   and styled so the alt text reads as a caption instead of as a broken icon. */
+img.cropmissing {
+  width: 160px;
+  height: 90px;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--muted);
+  overflow: hidden;
+}
+
 .pic figcaption {
   display: flex;
   align-items: center;

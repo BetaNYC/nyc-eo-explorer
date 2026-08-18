@@ -63,13 +63,25 @@ export const PICTURE_TAGS = ["seal", "sig", null];
 export const tagKey = (tag) => tag ?? "none";
 
 /**
- * The crops themselves are served from the sibling repo's gitignored
- * `vlm-pics/` by a dev-server mount (see vite.config.js), NOT from public/.
- * They are regenerable pixels, not corpus data, so nothing here assumes they
- * exist -- a crop that has not been rendered locally 404s and the tile falls
- * back to its alt text ("likely city seal, volume page 9").
+ * The crops are copied into `public/pics/` by `npm run data`, out of the data
+ * repo's committed JPEG derivative, so they are ordinary files of this site in
+ * dev and in production alike.
+ *
+ * Nothing here assumes they exist even so: they are regenerable pixels rather
+ * than corpus data, and a checkout whose sibling repo is missing builds fine
+ * without them.
  */
 export const cropUrl = (image) => assetUrl(`pics/${image}`);
+
+/**
+ * A crop that did not load.
+ *
+ * The browser's default for a broken image is an icon plus, maybe, the alt text
+ * clipped to whatever box the layout gave it. The alt is the useful part here
+ * ("likely city seal, volume page 9"), so the tile is marked and the stylesheet
+ * turns it into a placeholder that can actually be read.
+ */
+export const onCropError = (e) => e.currentTarget.classList.add("cropmissing");
 
 export const TAG_LABELS = {
   seal: "likely city seal",

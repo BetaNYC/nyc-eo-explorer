@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { longLabel } from "../data/labels.js";
-import { cropUrl, tagLabel } from "../data/pictures.js";
+import { cropUrl, onCropError, tagLabel } from "../data/pictures.js";
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString(undefined, { timeZone: "UTC" }) : null;
@@ -63,6 +63,7 @@ export default function Lightbox({ items, index, onIndex, onClose, onOpen }) {
           <img
             src={cropUrl(item.image)}
             alt={`${tagLabel(item.tag)}, volume page ${item.page}`}
+            onError={onCropError}
           />
           <figcaption className="lbcap">
             <span className={`badge pic-${item.tag ?? "none"}`}>{tagLabel(item.tag)}</span>

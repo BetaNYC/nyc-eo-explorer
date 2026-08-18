@@ -6,9 +6,12 @@ A fully static explorer for the [NYC mayoral executive orders corpus](https://gi
 Queries run in the browser: [DuckDB-WASM](https://duckdb.org/docs/current/clients/wasm/overview)
 executes real SQL over Parquet files served as static assets.
 
-> **Local development only, for now.** There is no deploy pipeline yet — the build
-> output is a plain static directory, so the hosting decision (GitHub Pages,
-> Cloudflare Pages, anything else) stays open.
+**Deployed to GitHub Pages** from `main` by
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): the corpus repo is
+checked out alongside, the Parquet and picture crops are rebuilt from it, and the
+whole thing is published as a static directory. Everything the page needs is served
+from Pages except the scanned source PDFs, which are 1.1 GB of git-LFS files and are
+read cross-origin instead — see "The source PDFs, side by side" below.
 
 ## Requirements
 
@@ -127,19 +130,22 @@ The type filter keeps `null` as a **third** option ("untagged", 469 of 2,137),
 not as a synonym for "neither seal nor signature", and each crop opens full size
 — a signature is a wide ribbon and illegible at thumbnail height.
 
-The crops themselves are gitignored pixels in the sibling repo, so they are
-**not** copied into `public/`: a dev-server mount in `vite.config.js` serves them
-at `/pics/<volume>/<file>.png` straight out of `../nyc-executive-orders/vlm-pics`
-(`EO_PICS_DIR=/path` to point elsewhere). A build has no such mount, so a
-deployed page shows each tile's alt text until the crops are given a home of
-their own — which is why the whole picture feature, the tab included, is local
-dev only for now. Rebuild after clipping another volume — `npm run dev` does it for you,
-the picture manifest is one of the staleness triggers `ensure-data.mjs` watches.
+The crops are copied into `public/pics/` by `npm run data`, out of the data repo's
+committed `vlm-pics-web/` — the same crops as its gitignored 300 dpi `vlm-pics/`
+PNGs, re-encoded to JPEG q85 by `scripts/build_web_crops.py` there. That takes the
+set from 472 MB to 53 MB, which is what makes it possible to just *be* part of the
+site rather than something served from elsewhere: dev and production load the same
+URLs, and the picture layer costs no LFS bandwidth at all. `EO_PICS_DIR=/path`
+points at another tree, and a checkout with only the PNGs falls back to those.
+Rebuild after clipping another volume — `npm run dev` does it for you, the picture
+manifest is one of the staleness triggers `ensure-data.mjs` watches. A crop that is
+somehow missing degrades to its alt text rather than a broken-image icon.
 
-**The source PDFs, side by side (local dev only).** The same mount serves the
-scans at `/pdf/<repo-relative path>` rooted at the data repo itself
-(`EO_REPO_DIR=/path` to point elsewhere), so a record's own `pdf_path` is the
-URL and nothing guesses a location. The detail view's **Text only / Side by
+**The source PDFs, side by side.** A record's own `pdf_path` is the URL under
+either base, so nothing guesses a location. In dev a mount in `vite.config.js`
+serves the scans at `/pdf/<repo-relative path>` rooted at the data repo itself
+(`EO_REPO_DIR=/path` to point elsewhere); a deployed build reads them from
+`VITE_MEDIA_BASE` instead. The detail view's **Text only / Side by
 side** toggle puts the scan next to the transcription, in **pdf.js's own viewer
 component** (`pdfjs-dist/web/pdf_viewer.mjs` — the viewer Firefox's built-in
 reader is built on). It arrives on the order's first page: page 49 of a
@@ -172,13 +178,24 @@ then re-applying `page-width`, fixes both. The zoom button also reads "Fit"
 rather than a percentage while fitting: pdf.js scales relative to 72 dpi points,
 so an exact page-width fit reports as ~57% and reads like a bug.
 
-Both mounts refuse anything outside their root or with the wrong extension —
-they read paths off a URL, and the PDF mount is rooted at a whole repository.
-The PDF mount also answers **range requests**, which is load-bearing rather than
-polite: a bound volume is ~66 MB, and without ranges the viewer downloads all of
-it before showing anything. 3,184 git-LFS PDFs are not something to copy into a
-build, so a deployed page has no side-by-side pane — the DORIS links in the
-metadata table still go to the same documents.
+The dev mount refuses anything outside its root or with the wrong extension — it
+reads paths off a URL and is rooted at a whole repository. It also answers **range
+requests**, which is load-bearing rather than polite: a bound volume is ~49 MB, and
+without ranges the viewer downloads all of it before showing anything.
+
+Deployed, the scans come from **`media.githubusercontent.com`** — the one GitHub
+host that resolves a git-LFS pointer to the file behind it, since Pages serves the
+pointer itself and could not hold 1.1 GB regardless. The deploy pins the URL to the
+commit it read the corpus from, so a later upstream push cannot change the documents
+under a live page.
+
+Ranges are load-bearing there too, and pdf.js will not use them on its own: CORS
+does not expose `Accept-Ranges` to a cross-origin reader, so its own negotiation
+concludes the host has none and streams whole volumes. `PdfViewer` therefore
+supplies a `PDFDataRangeTransport` that asserts what the detection cannot observe,
+sizing the file from a HEAD (`Content-Length` *is* exposed) and fetching explicit
+`bytes=N-M` ranges. If a scan fails to load anyway, the pane offers the City's own
+copy — the same link the metadata table carries.
 
 ### The engine
 
@@ -269,7 +286,10 @@ deep links ride the URL hash.
 
 One deliberate divergence: `qa-ui` serves its data through dev-server middleware,
 which means its `npm run build` produces a non-functional bundle. This app reads
-plain files from `public/`, so dev and production are the same code path.
+plain files from `public/`, so dev and production are the same code path. The one
+asset that is not a plain file — the scans, which are too large to be one — is the
+only place the two diverge, and `src/paths.js` is the single seam where that
+happens.
 
 Chart colors were validated for colorblind separation and contrast rather than
 chosen by eye. `text_quality` uses a sequential ramp because it is an _ordered_

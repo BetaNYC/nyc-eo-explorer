@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { longLabel } from "../data/labels.js";
-import { cropUrl, picturesFor, tagLabel } from "../data/pictures.js";
+import { cropUrl, onCropError, picturesFor, tagLabel } from "../data/pictures.js";
 import { ensureText, query } from "../duckdb/store.js";
 import { renderMarkdown } from "../markdown.js";
 import { localPdfUrl } from "../paths.js";
@@ -225,7 +225,11 @@ export default function Detail({ eoId, onOpen, onBack }) {
           <div className="pics">
             {pics.map((p) => (
               <figure className="pic" key={p.image}>
-                <img src={cropUrl(p.image)} alt={`${tagLabel(p.tag)}, volume page ${p.page}`} />
+                <img
+                  src={cropUrl(p.image)}
+                  alt={`${tagLabel(p.tag)}, volume page ${p.page}`}
+                  onError={onCropError}
+                />
                 <figcaption>
                   <span className={`badge pic-${p.tag ?? "none"}`}>{tagLabel(p.tag)}</span>
                   <span className="muted">p. {p.page}</span>
@@ -290,10 +294,11 @@ export default function Detail({ eoId, onOpen, onBack }) {
                   initialPage={row.source_page_start ?? 1}
                   orderPages={pages}
                   label={`${row.eo_id} source PDF`}
+                  sourceUrl={pdfHref(row)}
                 />
               </Suspense>
               <figcaption>
-                Served from the local data repo — <code>{row.pdf_path}</code>.{" "}
+                <code>{row.pdf_path}</code>, from the corpus mirror.{" "}
                 <a href={pdfHrefLocal} target="_blank" rel="noreferrer">
                   open in a new tab ↗
                 </a>

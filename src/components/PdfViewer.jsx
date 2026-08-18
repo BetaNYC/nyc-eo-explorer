@@ -3,6 +3,8 @@ import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { EventBus, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { useEffect, useRef, useState } from "react";
 
+import { mediaBase } from "../paths.js";
+
 import "pdfjs-dist/web/pdf_viewer.css";
 
 /**
@@ -26,7 +28,92 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
-export default function PdfViewer({ src, initialPage = 1, orderPages = [], label }) {
+/**
+ * Range requests against media.githubusercontent.com, which pdf.js will not
+ * make for itself.
+ *
+ * The host honours ranges perfectly well -- it answers 206 with a correct
+ * Content-Range. What it does not do is send `access-control-expose-headers`,
+ * and `Accept-Ranges` is not one of the seven response headers CORS exposes by
+ * default. So `validateRangeRequestCapabilities` (pdf.mjs) reads null, decides
+ * the server has no range support, and streams the whole file: 49 MB before the
+ * first page of a bound volume paints, every time one is opened.
+ *
+ * Supplying a transport skips that negotiation entirely -- pdf.js asks this
+ * object for byte ranges and never inspects a header. We can assert what the
+ * detection could not observe because we know the host: the ranges are real.
+ *
+ * `Content-Length` IS CORS-safelisted, so the one thing we do have to discover
+ * -- how long the file is -- can still be read off a HEAD.
+ */
+class MediaRangeTransport extends pdfjs.PDFDataRangeTransport {
+  constructor(length, url) {
+    // No initial chunk: pdf.js requests the ranges it wants as soon as the
+    // transport is ready, starting from the trailer.
+    super(length, new Uint8Array(0), false, null);
+    this.url = url;
+    this.controllers = new Set();
+  }
+
+  requestDataRange(begin, end) {
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    // An explicit `bytes=N-M` is a CORS-safelisted request header, so this stays
+    // a simple request with no preflight. A SUFFIX range (`bytes=-500`) is not
+    // safelisted and would be preflighted against an Access-Control-Allow-Headers
+    // that does not list Range -- i.e. blocked. pdf.js computes absolute offsets
+    // from the length above, so it never asks for one.
+    fetch(this.url, {
+      headers: { Range: `bytes=${begin}-${end - 1}` },
+      signal: controller.signal,
+    })
+      .then((r) => r.arrayBuffer())
+      .then((buf) => this.onDataRange(begin, new Uint8Array(buf)))
+      .catch((e) => {
+        // An abort is this component being torn down, not a failure worth
+        // reporting; anything else leaves pdf.js waiting on a chunk forever, so
+        // say so rather than hanging on a blank pane.
+        if (e.name !== "AbortError") console.error(`PDF range ${begin}-${end} failed`, e);
+      })
+      .finally(() => this.controllers.delete(controller));
+  }
+
+  abort() {
+    for (const c of this.controllers) c.abort();
+    this.controllers.clear();
+  }
+}
+
+/**
+ * `getDocument` arguments for a URL: a range transport when the scans are being
+ * read cross-origin, and plain pdf.js defaults when they are not.
+ *
+ * Dev is served by the /pdf/ mount in vite.config.js, same-origin, where the
+ * built-in negotiation works and is the thing worth exercising locally.
+ */
+async function documentArgs(src, signal) {
+  if (!mediaBase()) return { url: src };
+  // Strip `#page=`; it is an open parameter for a viewer, and sending it to
+  // fetch would just miss the CDN cache.
+  const url = src.split("#")[0];
+  const head = await fetch(url, { method: "HEAD", signal });
+  if (!head.ok) throw new Error(`${head.status} ${head.statusText}`);
+  const length = Number(head.headers.get("Content-Length"));
+  if (!Number.isInteger(length) || length <= 0) {
+    // Nothing to range against. Falling back to a whole-file fetch is slow but
+    // correct, which beats failing.
+    return { url };
+  }
+  return { range: new MediaRangeTransport(length, url) };
+}
+
+export default function PdfViewer({
+  src,
+  initialPage = 1,
+  orderPages = [],
+  label,
+  sourceUrl = null,
+}) {
   const [page, setPage] = useState(initialPage);
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1);
@@ -100,16 +187,24 @@ export default function PdfViewer({ src, initialPage = 1, orderPages = [], label
       });
     });
 
-    const task = pdfjs.getDocument({ url: src });
-    task.promise.then(
-      (doc) => {
+    // The HEAD that sizes the file is itself abortable, so a fast click through
+    // three orders does not leave three of them in flight.
+    const headAbort = new AbortController();
+    let task = null;
+    documentArgs(src, headAbort.signal)
+      .then((args) => {
         if (cancelled) return;
-        viewer.setDocument(doc);
-        linkService.setDocument(doc, null);
-        setNumPages(doc.numPages);
-      },
-      (e) => !cancelled && setError(e)
-    );
+        task = pdfjs.getDocument(args);
+        return task.promise.then((doc) => {
+          if (cancelled) return;
+          viewer.setDocument(doc);
+          linkService.setDocument(doc, null);
+          setNumPages(doc.numPages);
+        });
+      })
+      .catch((e) => {
+        if (!cancelled && e.name !== "AbortError") setError(e);
+      });
 
     // Re-fitting on resize is ours to do: the viewer holds a scale, not a
     // policy, so "page-width" has to be re-applied when the pane changes width.
@@ -125,12 +220,15 @@ export default function PdfViewer({ src, initialPage = 1, orderPages = [], label
 
     return () => {
       cancelled = true;
+      headAbort.abort();
       ro.disconnect();
       viewer.setDocument(null);
       linkService.setDocument(null);
       viewerRef.current = null;
-      // Aborts the network requests and kills the worker.
-      task.destroy();
+      // Aborts the network requests and kills the worker. Null when the effect
+      // is torn down while the sizing HEAD is still out; destroying the task
+      // also calls abort() on the transport, which cancels its ranges.
+      task?.destroy();
     };
   }, [src, initialPage]);
 
@@ -224,12 +322,20 @@ export default function PdfViewer({ src, initialPage = 1, orderPages = [], label
 
       {error ? (
         <div className="pdfmissing">
-          <p>Could not load the PDF ({String(error.message ?? error)}).</p>
+          <p>Could not load the scan ({String(error.message ?? error)}).</p>
           <p>
-            The scans are served from a local checkout of the data repo, so this is expected
-            anywhere else.{" "}
+            {/* The scan is a convenience; the document itself is the City's, and
+                that copy is always reachable. Offer it first. */}
+            {sourceUrl ? (
+              <>
+                <a href={sourceUrl} target="_blank" rel="noreferrer">
+                  read it at the original source ↗
+                </a>
+                {" · "}
+              </>
+            ) : null}
             <a href={src} target="_blank" rel="noreferrer">
-              try it directly ↗
+              try the scan directly ↗
             </a>
           </p>
         </div>

@@ -1,0 +1,101 @@
+name: deploy
+
+# Build the explorer and publish it to GitHub Pages.
+#
+# The site is self-contained except for the scanned source PDFs: the app bundle,
+# the Parquet artifacts and ~53 MB of picture crops are all served from Pages,
+# and only the 1.1 GB of scans are read cross-origin at runtime. See
+# src/paths.js for why they cannot be part of the site.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and let a newer commit win rather than queueing behind
+# an older one. `cancel-in-progress: false` would publish them out of order.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The data repo is checked out as a SUBDIRECTORY of this one, not as the
+    # sibling directory the scripts default to, so every step that reads it gets
+    # told where it is. `prebuild` runs ensure-data.mjs again during the build
+    # step and consults the same variables.
+    env:
+      EO_CORPUS_DIR: ${{ github.workspace }}/nyc-executive-orders/corpus
+      EO_PICS_DIR: ${{ github.workspace }}/nyc-executive-orders/vlm-pics-web
+      EO_REPO_DIR: ${{ github.workspace }}/nyc-executive-orders
+    steps:
+      - uses: actions/checkout@v4
+
+      # The corpus, the supersession graph and the picture crops all come from
+      # the sibling data repo, which is a PUBLIC BetaNYC repo -- no token. Same
+      # cross-repo pattern as that repo's own tests.yml.
+      #
+      # DELIBERATELY NO `lfs: true`. The PDFs there are 1.1 GB of LFS objects and
+      # nothing in this build reads them: scripts/build-data.mjs works from the
+      # corpus JSON alone, and the browser fetches the scans it needs straight
+      # from media.githubusercontent.com. Turning LFS on would spend that 1.1 GB
+      # of the org's LFS bandwidth on every single run, for files we discard.
+      - name: Check out nyc-executive-orders (corpus + crops)
+        uses: actions/checkout@v4
+        with:
+          repository: BetaNYC/nyc-executive-orders
+          path: nyc-executive-orders
+
+      # Pin the scans to the exact commit this build read the corpus from, so a
+      # later push upstream cannot change the documents under a deployed site.
+      - name: Resolve the corpus commit
+        run: echo "CORPUS_SHA=$(git -C nyc-executive-orders rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Unit tests only; the SQL integration suite self-skips until the Parquet
+      # exists, which is the next step.
+      - run: npm test
+
+      # Writes public/data/ and copies the crops into public/pics/. `prebuild`
+      # would do this too, but running it as its own step makes a corpus problem
+      # read as a corpus problem rather than as a build failure.
+      - run: npm run data
+
+      - run: npm run build
+        env:
+          VITE_BASE: /nyc-eo-explorer/
+          VITE_MEDIA_BASE: https://media.githubusercontent.com/media/BetaNYC/nyc-executive-orders/${{ env.CORPUS_SHA }}/
+
+      # Published sites are capped at 1 GB. We are ~100 MB, but the crop set
+      # grows as more volumes are OCR'd upstream, so fail loudly here rather
+      # than at deploy time.
+      - name: Check the site fits
+        run: |
+          KB=$(du -sk dist | cut -f1)
+          echo "site is $((KB / 1024)) MB"
+          test "$KB" -lt 900000 || { echo "::error::dist exceeds 900 MB, near the 1 GB Pages cap"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

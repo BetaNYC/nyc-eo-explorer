@@ -2,10 +2,16 @@ node_modules/
 dist/
 coverage/
 
-# Generated from the sibling nyc-executive-orders checkout by `npm run data`.
-# Not committed: it is a derived artifact, and the corpus it comes from is
-# still changing (Phase E OCR is in progress upstream).
+# Both generated from the sibling nyc-executive-orders checkout by `npm run
+# data`. Not committed: they are derived artifacts, and the corpus they come
+# from is still changing (Phase E OCR is in progress upstream). The deploy
+# workflow rebuilds them from a fresh checkout of that repo on every run.
+#
+# public/pics/ is ~53 MB of picture crops copied out of the data repo's
+# committed vlm-pics-web/. It IS part of the published site -- it is just not
+# part of this repo's history.
 public/data/
+public/pics/
 
 .DS_Store
 *.log

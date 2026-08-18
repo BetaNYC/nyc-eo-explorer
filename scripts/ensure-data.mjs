@@ -18,9 +18,17 @@ const MANIFEST = join(OUT_DIR, "manifest.json");
 const CORPUS_DIR = resolve(
   process.env.EO_CORPUS_DIR || join(REPO_ROOT, "..", "nyc-executive-orders", "corpus")
 );
-const PICS_DIR = resolve(
-  process.env.EO_PICS_DIR || join(REPO_ROOT, "..", "nyc-executive-orders", "vlm-pics")
-);
+// Both crop trees, because build-data.mjs prefers the committed JPEG derivative
+// and falls back to the source PNGs -- a rebuild is due when EITHER moves, and
+// which one is in play can change under us (someone runs build_web_crops.py).
+const PICS_DIRS = [
+  process.env.EO_PICS_DIR,
+  join(REPO_ROOT, "..", "nyc-executive-orders", "vlm-pics-web"),
+  join(REPO_ROOT, "..", "nyc-executive-orders", "vlm-pics"),
+]
+  .filter(Boolean)
+  .map((p) => resolve(p));
+const PICS_OUT = join(REPO_ROOT, "public", "pics");
 
 const mtime = async (p) => (existsSync(p) ? (await stat(p)).mtimeMs : 0);
 
@@ -39,7 +47,12 @@ async function needsRebuild() {
   }
   // The picture side-car runs per volume and merge-updates one manifest, so
   // this moves every time another volume is clipped.
-  if ((await mtime(join(PICS_DIR, "manifest.json"))) > builtAt) return "picture crops changed";
+  for (const dir of PICS_DIRS) {
+    if ((await mtime(join(dir, "manifest.json"))) > builtAt) return "picture crops changed";
+  }
+  // The crops are copied into the build rather than mounted from the sibling
+  // checkout, so an emptied public/pics/ is as stale as an out-of-date manifest.
+  if (manifest.picture_count > 0 && !existsSync(PICS_OUT)) return "public/pics/ is missing";
   // Phase E output appearing for the first time is also a reason to rebuild.
   if (existsSync(join(CORPUS_DIR, "eo_pre1974.json")) && !manifest.includes_pre1974) {
     return "pre-1974 corpus appeared upstream";
