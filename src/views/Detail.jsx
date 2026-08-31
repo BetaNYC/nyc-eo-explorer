@@ -62,7 +62,7 @@ const pdfHref = (row) =>
     ? `${row.source_pdf_url}#page=${row.source_page_start}`
     : row.source_pdf_url;
 
-export default function Detail({ eoId, onOpen, onOpenEntity, onBack }) {
+export default function Detail({ eoId, onOpen, onOpenEntity, onBack, backLabel }) {
   const [row, setRow] = useState(null);
   const [text, setText] = useState(null);
   const [edges, setEdges] = useState({ out: [], in: [] });
@@ -187,7 +187,7 @@ export default function Detail({ eoId, onOpen, onOpenEntity, onBack }) {
   return (
     <div className="detail">
       <button className="back" onClick={onBack}>
-        ← Back to results
+        {backLabel ?? "← Back to results"}
       </button>
       <div className="panel">
         <h2>{longLabel(row)}</h2>

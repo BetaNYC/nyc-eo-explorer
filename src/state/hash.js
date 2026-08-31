@@ -91,10 +91,42 @@ export function writeHash(state) {
   return s ? `#${s}` : "";
 }
 
-/** Apply to the address bar without adding a history entry, and only if changed. */
-export function pushHash(state) {
+/**
+ * How deep into the app the current history entry is.
+ *
+ * Every entry this app creates carries its own depth, so a "back" button can
+ * tell a step it pushed itself from the entry the visitor arrived on. Anything
+ * else -- a fresh load, an entry from before this ran -- reads as 0.
+ */
+export function historyDepth() {
+  const i = window.history.state?.eoNav;
+  return Number.isInteger(i) && i >= 0 ? i : 0;
+}
+
+/** True when the app itself put a previous state behind this one. */
+export function canGoBack() {
+  return historyDepth() > 0;
+}
+
+/**
+ * Apply to the address bar.
+ *
+ * `mode` is "push" for a move to another page -- an order, an agency, a tab --
+ * and "replace" for everything else. Filters, the search box and the graph's
+ * own picks overwrite the current entry, so going back returns to the whole
+ * state the visitor left, filters included, rather than to a guess at it.
+ */
+export function pushHash(state, mode = "replace") {
   const next = writeHash(state);
-  if (next !== window.location.hash) {
-    window.history.replaceState(null, "", next || window.location.pathname);
+  const url = next || window.location.pathname;
+  const depth = historyDepth();
+  // A push to the state already showing would add an entry that changes
+  // nothing, and back would then appear to do nothing.
+  if (mode === "push" && next !== window.location.hash) {
+    window.history.pushState({ eoNav: depth + 1 }, "", url);
+    return;
+  }
+  if (next !== window.location.hash || window.history.state?.eoNav !== depth) {
+    window.history.replaceState({ eoNav: depth }, "", url);
   }
 }

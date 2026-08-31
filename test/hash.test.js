@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_STATE, readHash, writeHash } from "../src/state/hash.js";
+import { DEFAULT_STATE, canGoBack, pushHash, readHash, writeHash } from "../src/state/hash.js";
 
 const STATES = [
   { ...DEFAULT_STATE },
@@ -97,5 +97,101 @@ describe("graph selection in the hash", () => {
 
   it("survives a hand-edited link with a trailing comma", () => {
     expect(readHash("#entity=oti&also=doc,").also).toEqual(["doc"]);
+  });
+});
+
+/**
+ * The smallest window the history helpers need: an entry stack, plus back().
+ *
+ * The browser's own history is not available in a node test, and jsdom's cannot
+ * go back over a pushState. The stack below is the part that matters -- an
+ * entry holds a hash AND a state object, and back() restores both.
+ */
+function fakeWindow(hash = "") {
+  const entries = [{ hash, state: null }];
+  let at = 0;
+  const win = {
+    location: {
+      pathname: "/",
+      get hash() {
+        return entries[at].hash;
+      },
+    },
+    history: {
+      get state() {
+        return entries[at].state;
+      },
+      pushState(state, _title, url) {
+        entries.length = at + 1;
+        entries.push({ hash: String(url).startsWith("#") ? String(url) : "", state });
+        at += 1;
+      },
+      replaceState(state, _title, url) {
+        entries[at] = { hash: String(url).startsWith("#") ? String(url) : "", state };
+      },
+      back() {
+        if (at > 0) at -= 1;
+      },
+    },
+    entries,
+  };
+  return win;
+}
+
+describe("back over the history the app writes", () => {
+  afterEach(() => {
+    delete globalThis.window;
+  });
+
+  it("returns to the exact state a page was left in, filters and all", () => {
+    globalThis.window = fakeWindow();
+
+    // The agencies index, filtered.
+    const index = { ...DEFAULT_STATE, view: "entities", entity_q: "board", entity_min: 5 };
+    pushHash(index);
+    expect(canGoBack()).toBe(false);
+
+    // Into one agency, then two picks on its graph and a cap: replaced, so all
+    // of it belongs to the same entry.
+    const agency = { ...index, entity: "x-board-of-estimate" };
+    pushHash(agency, "push");
+    const filtered = { ...agency, also: ["nyc-comptroller"], max_agencies: 6 };
+    pushHash(filtered);
+
+    // Into an order from that graph.
+    pushHash({ ...filtered, entity: null, eo: "1975-EO-040" }, "push");
+    expect(canGoBack()).toBe(true);
+
+    window.history.back();
+    // The agency page as it was: the picks and the cap, not a bare agency page
+    // and not the index.
+    expect(readHash(window.location.hash)).toEqual(filtered);
+
+    window.history.back();
+    expect(readHash(window.location.hash)).toEqual(index);
+    expect(canGoBack()).toBe(false);
+  });
+
+  it("adds no entry for a filter change", () => {
+    globalThis.window = fakeWindow();
+    pushHash({ ...DEFAULT_STATE, q: "tenant" });
+    pushHash({ ...DEFAULT_STATE, q: "tenant housing" });
+    pushHash({ ...DEFAULT_STATE, q: "tenant housing", mayor: ["Koch"] });
+    expect(window.entries).toHaveLength(1);
+    expect(canGoBack()).toBe(false);
+  });
+
+  it("adds no entry for a push to the state already showing", () => {
+    globalThis.window = fakeWindow();
+    const state = { ...DEFAULT_STATE, eo: "1975-EO-040" };
+    pushHash(state, "push");
+    pushHash(state, "push");
+    expect(window.entries).toHaveLength(2);
+  });
+
+  it("reports no way back on a link opened straight to an order", () => {
+    globalThis.window = fakeWindow("#eo=1975-EO-040");
+    pushHash(readHash("#eo=1975-EO-040"));
+    expect(canGoBack()).toBe(false);
   });
 });

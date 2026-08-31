@@ -13,7 +13,7 @@ import {
 import { useDuckDB } from "./duckdb/useDuckDB.js";
 import { dataUrl } from "./paths.js";
 import { MODES, buildFacetQuery } from "./search/sql.js";
-import { pushHash, readHash } from "./state/hash.js";
+import { canGoBack, pushHash, readHash } from "./state/hash.js";
 import Analytics from "./views/Analytics.jsx";
 import Browse from "./views/Browse.jsx";
 import Detail from "./views/Detail.jsx";
@@ -33,13 +33,33 @@ export default function App() {
   const [fatal, setFatal] = useState(null);
   const engine = useDuckDB();
   const searchRef = useRef(null);
+  // How the next write to the address bar is applied. Set to "push" by
+  // navigate() for the one state change that follows it, then back to
+  // "replace": only a move to another page earns a history entry.
+  const navMode = useRef("replace");
+  // The state the last navigate() left behind, for the back button's label
+  // only. Unknown after a real back/forward, which is why the label always has
+  // a generic form to fall back to.
+  const cameFrom = useRef(null);
 
   // Keep the address bar in sync, and respond to back/forward.
-  useEffect(() => pushHash(state), [state]);
   useEffect(() => {
-    const onPop = () => setState(readHash());
+    pushHash(state, navMode.current);
+    navMode.current = "replace";
+  }, [state]);
+  useEffect(() => {
+    const onPop = () => {
+      cameFrom.current = null;
+      setState(readHash());
+    };
+    // popstate covers the entries this app pushes; hashchange covers a hash
+    // typed or pasted into the address bar, which pushes no state of ours.
+    window.addEventListener("popstate", onPop);
     window.addEventListener("hashchange", onPop);
-    return () => window.removeEventListener("hashchange", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
   }, []);
 
   // The manifest is tiny and paints the header before the 6.8 MB engine lands.
@@ -129,6 +149,34 @@ export default function App() {
   }, [metaReady, filters, wantsPictures, engine.hasPictures]);
 
   const update = useCallback((patch) => setState((s) => ({ ...s, ...patch })), []);
+
+  /**
+   * A move to another page: an order, an agency, a tab.
+   *
+   * This one gets a history entry, so the page it leaves -- with its filters,
+   * its search text and its graph picks, all of which update() has been writing
+   * into the current entry -- is what the back button returns to.
+   */
+  const navigate = useCallback((patch) => {
+    navMode.current = "push";
+    setState((s) => {
+      cameFrom.current = s;
+      return { ...s, ...patch };
+    });
+  }, []);
+
+  /**
+   * The back button on an order or an agency page.
+   *
+   * `fallback` is for the entry the visitor arrived on: a link straight to
+   * #eo=... has nothing behind it, so the button computes a sensible page
+   * instead of dropping the visitor out of the app.
+   */
+  const goBack = useCallback((fallback) => {
+    if (canGoBack()) window.history.back();
+    else setState((s) => ({ ...s, ...fallback }));
+  }, []);
+
   const clearFilters = useCallback(
     () =>
       setState((s) => ({
@@ -191,7 +239,7 @@ export default function App() {
               key={v}
               aria-current={state.view === v && !state.eo && !state.entity ? "page" : undefined}
               onClick={() =>
-                update({ view: v, eo: null, entity: null, also: [], max_agencies: null })
+                navigate({ view: v, eo: null, entity: null, also: [], max_agencies: null })
               }
             >
               {label}
@@ -220,9 +268,12 @@ export default function App() {
           ) : state.eo ? (
             <Detail
               eoId={state.eo}
-              onOpen={(id) => update({ eo: id })}
-              onOpenEntity={(id) => update({ eo: null, entity: id, also: [] })}
-              onBack={() => update({ eo: null })}
+              onOpen={(id) => navigate({ eo: id })}
+              onOpenEntity={(id) => navigate({ eo: null, entity: id, also: [] })}
+              onBack={() => goBack({ eo: null })}
+              backLabel={
+                cameFrom.current?.entity ? "← Back to the agency" : "← Back to results"
+              }
             />
           ) : state.entity ? (
             <Entity
@@ -232,13 +283,18 @@ export default function App() {
               // The cap rides along to the next agency, unlike the picks: it is
               // a statement about which orders are worth looking at at all, not
               // about this one agency.
-              onOpen={(id) => update({ entity: id, also: [] })}
-              onOpenEo={(id) => update({ entity: null, eo: id })}
-              onBack={() => update({ entity: null, also: [], view: "entities" })}
+              onOpen={(id) => navigate({ entity: id, also: [] })}
+              onOpenEo={(id) => navigate({ entity: null, eo: id })}
+              onBack={() => goBack({ entity: null, also: [], view: "entities" })}
+              backLabel={cameFrom.current?.eo ? "← Back to the order" : "← Back to agencies"}
               onChange={update}
             />
           ) : state.view === "entities" ? (
-            <Entities state={state} onOpen={(id) => update({ entity: id })} onChange={update} />
+            <Entities
+              state={state}
+              onOpen={(id) => navigate({ entity: id })}
+              onChange={update}
+            />
           ) : state.view === "analytics" ? (
             <Analytics hasEntities={Boolean(manifest?.includes_entities)} />
           ) : state.view === "pictures" ? (
@@ -259,7 +315,7 @@ export default function App() {
                 filters={filters}
                 hasText={engine.hasText}
                 hasPictures={engine.hasPictures}
-                onOpen={(id) => update({ eo: id })}
+                onOpen={(id) => navigate({ eo: id })}
                 onChange={update}
               />
             </>
@@ -277,7 +333,7 @@ export default function App() {
                 state={state}
                 filters={filters}
                 hasText={engine.hasText}
-                onOpen={(id) => update({ eo: id })}
+                onOpen={(id) => navigate({ eo: id })}
               />
             </>
           )}

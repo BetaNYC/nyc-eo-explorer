@@ -63,6 +63,7 @@ export default function Entity({
   onOpen,
   onOpenEo,
   onBack,
+  backLabel,
   onChange,
 }) {
   const [row, setRow] = useState(null);
@@ -218,7 +219,7 @@ export default function Entity({
   return (
     <div className="detail">
       <button className="back" onClick={onBack}>
-        ← Back to agencies
+        {backLabel ?? "← Back to agencies"}
       </button>
 
       <div className="panel">
