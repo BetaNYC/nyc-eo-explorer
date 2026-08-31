@@ -4,6 +4,7 @@ import FacetPanel from "./components/FacetPanel.jsx";
 import {
   PHASES,
   ensureEngine,
+  ensureEntities,
   ensureFts,
   ensurePictures,
   ensureText,
@@ -16,6 +17,8 @@ import { pushHash, readHash } from "./state/hash.js";
 import Analytics from "./views/Analytics.jsx";
 import Browse from "./views/Browse.jsx";
 import Detail from "./views/Detail.jsx";
+import Entities from "./views/Entities.jsx";
+import Entity from "./views/Entity.jsx";
 import Pictures from "./views/Pictures.jsx";
 
 const FACET_KEYS = ["mayor", "text_quality", "source"];
@@ -66,6 +69,17 @@ export default function App() {
       ensureText().catch(() => {});
     }
   }, [manifest, wantsText, engine.phase]);
+
+  // The agency tables are wanted by three places: an order (the panel listing
+  // who it names), an agency page, and the index. Loaded here rather than in
+  // each of them so a deep link straight to #entity=... does not race three
+  // separate first calls.
+  const wantsEntities = Boolean(state.eo) || Boolean(state.entity) || state.view === "entities";
+  useEffect(() => {
+    if (manifest?.includes_entities && wantsEntities && engine.phase !== PHASES.IDLE) {
+      ensureEntities().catch(() => {});
+    }
+  }, [manifest, wantsEntities, engine.phase]);
 
   // The crop table is a JSON fetch plus a CTAS, wanted by exactly one tab and
   // by the facet counts that tab shows, so it loads on arrival there.
@@ -167,13 +181,18 @@ export default function App() {
         <nav className="tabs">
           {[
             ["browse", "Search"],
+            // "Agencies", not "Entities": the scan finds organizations only --
+            // never a person, never a place.
+            ...(manifest?.includes_entities ? [["entities", "Agencies"]] : []),
             ["pictures", "Pictures"],
             ["analytics", "Analytics"],
           ].map(([v, label]) => (
             <button
               key={v}
-              aria-current={state.view === v && !state.eo ? "page" : undefined}
-              onClick={() => update({ view: v, eo: null })}
+              aria-current={state.view === v && !state.eo && !state.entity ? "page" : undefined}
+              onClick={() =>
+                update({ view: v, eo: null, entity: null, also: [], max_agencies: null })
+              }
             >
               {label}
             </button>
@@ -184,7 +203,7 @@ export default function App() {
       <EngineStatus engine={engine} />
 
       <div className="main">
-        {SEARCH_VIEWS.has(state.view) && !state.eo ? (
+        {SEARCH_VIEWS.has(state.view) && !state.eo && !state.entity ? (
           <aside className="rail">
             <FacetPanel
               state={state}
@@ -202,10 +221,26 @@ export default function App() {
             <Detail
               eoId={state.eo}
               onOpen={(id) => update({ eo: id })}
+              onOpenEntity={(id) => update({ eo: null, entity: id, also: [] })}
               onBack={() => update({ eo: null })}
             />
+          ) : state.entity ? (
+            <Entity
+              entityId={state.entity}
+              also={state.also}
+              maxAgencies={state.max_agencies}
+              // The cap rides along to the next agency, unlike the picks: it is
+              // a statement about which orders are worth looking at at all, not
+              // about this one agency.
+              onOpen={(id) => update({ entity: id, also: [] })}
+              onOpenEo={(id) => update({ entity: null, eo: id })}
+              onBack={() => update({ entity: null, also: [], view: "entities" })}
+              onChange={update}
+            />
+          ) : state.view === "entities" ? (
+            <Entities state={state} onOpen={(id) => update({ entity: id })} onChange={update} />
           ) : state.view === "analytics" ? (
-            <Analytics />
+            <Analytics hasEntities={Boolean(manifest?.includes_entities)} />
           ) : state.view === "pictures" ? (
             <>
               {/* Same box, same modes, same `q` in the hash: a search typed on

@@ -42,6 +42,7 @@ let snapshot = {
   error: null,
   hasText: false,
   hasPictures: false,
+  hasEntities: false,
   ftsState: "unbuilt", // unbuilt | building | ready | unavailable
 };
 const listeners = new Set();
@@ -237,6 +238,69 @@ export function ensurePictures() {
     });
   }
   return picturesPromise;
+}
+
+/**
+ * Materialize the agency mentions.
+ *
+ * Deferred like the text is: the two files are ~330 KB and every query
+ * serializes onto the single worker, so they load when a page that needs them is
+ * actually opened -- an order, an agency, or the agency index.
+ *
+ * `eo_entity` is the derived table both features really read. 23,756 mentions
+ * collapse to ~20,000 distinct (order, agency) pairs, and counting DISTINCT
+ * orders is the difference between a truthful co-mention weight and one inflated
+ * by an agency being named nine times in one order.
+ *
+ * It leaves out the letterhead. `OFFICE OF THE MAYOR` is printed on the
+ * stationery at the head of 2,438 orders, and upstream marks those finds
+ * `in_letterhead` rather than deleting them. Counting them would put the Office
+ * of the Mayor in a pair with almost every agency in the corpus and drown the
+ * co-mention graph in an artefact of the notepaper. `entity_mentions` keeps
+ * every row, so nothing is lost -- only the counting table is narrowed.
+ *
+ * Failure is handled the way ensurePictures() handles it and NOT the way
+ * ensureText() does: no `phase: ERROR`. The text table is load-bearing for
+ * search; this is one feature, and losing it must not take the app down. The
+ * caller catches and reports inline.
+ */
+let entitiesPromise = null;
+export function ensureEntities() {
+  if (!entitiesPromise) {
+    entitiesPromise = (async () => {
+      const { db } = await ensureEngine();
+      for (const name of ["entities.parquet", "entity_mentions.parquet"]) {
+        const version = manifest.files[name].sha256.slice(0, 12);
+        await db.registerFileBuffer(name, await fetchBytes(dataUrl(name, version)));
+      }
+      await conn.query(`CREATE TABLE entities AS SELECT * FROM 'entities.parquet'`);
+      await conn.query(
+        `CREATE TABLE entity_mentions AS SELECT * FROM 'entity_mentions.parquet'`
+      );
+      await conn.query(`
+        CREATE TABLE eo_entity AS
+        SELECT eo_id, entity_id, count(*) AS n
+        FROM entity_mentions
+        WHERE NOT in_letterhead
+        GROUP BY 1, 2
+      `);
+      // How many agencies each order names. Materialized once because four
+      // queries on the agency page cap on it, and it is the same 20,000-row
+      // aggregate every time. The spread is wide -- half the orders name one or
+      // two agencies, one names 167 -- which is what makes the cap worth having.
+      await conn.query(`
+        CREATE TABLE eo_agencies AS
+        SELECT eo_id, count(*) AS agencies
+        FROM eo_entity
+        GROUP BY 1
+      `);
+      emit({ hasEntities: true });
+    })().catch((err) => {
+      entitiesPromise = null;
+      throw err;
+    });
+  }
+  return entitiesPromise;
 }
 
 /**

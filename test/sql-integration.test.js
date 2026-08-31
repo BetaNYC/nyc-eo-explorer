@@ -24,9 +24,24 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { flattenPictures } from "../src/data/pictures.js";
 import { parseQuery } from "../src/search/parseQuery.js";
 import {
+  AGENCY_TAIL,
   MODES,
+  RANKINGS,
+  buildAgencyCountStatsQuery,
+  buildAgencyHistogramQuery,
+  buildCooccurrenceEdgesQuery,
+  buildCooccurrenceQuery,
   buildCountQuery,
+  buildEntitiesForEoQuery,
+  buildEntityIndexCountQuery,
+  buildEntityIndexQuery,
+  buildEntityLineageQuery,
+  buildEntityNamesQuery,
+  buildEntityQuery,
+  buildEntityYearsQuery,
   buildFacetQuery,
+  buildRingEligibilityQuery,
+  buildMentionSpansQuery,
   buildPictureCountQuery,
   buildPictureQuery,
   buildPictureTagQuery,
@@ -70,6 +85,23 @@ d("generated SQL against real DuckDB + real Parquet", () => {
              lower(full_text) AS full_text_lc
       FROM '${p("eo_text.parquet")}'`);
     await conn.run(`CREATE TABLE edges AS SELECT * FROM '${p("supersession_edges.parquet")}'`);
+
+    // The same three tables src/duckdb/store.js builds, including the derived
+    // DISTINCT (order, agency) one every agency query actually reads.
+    await conn.run(`CREATE TABLE entities AS SELECT * FROM '${p("entities.parquet")}'`);
+    await conn.run(
+      `CREATE TABLE entity_mentions AS SELECT * FROM '${p("entity_mentions.parquet")}'`
+    );
+    // Mirrors src/duckdb/store.js, `NOT in_letterhead` included -- the point of
+    // this file is to run the real queries against the real Parquet, and a
+    // harness that builds a different table tests nothing.
+    await conn.run(`
+      CREATE TABLE eo_entity AS
+      SELECT eo_id, entity_id, count(*) AS n FROM entity_mentions
+      WHERE NOT in_letterhead GROUP BY 1, 2`);
+    await conn.run(`
+      CREATE TABLE eo_agencies AS
+      SELECT eo_id, count(*) AS agencies FROM eo_entity GROUP BY 1`);
 
     // The browser builds this table by handing DuckDB newline-delimited JSON
     // (src/duckdb/store.js). The rows come from the SAME flattener, so what is
@@ -449,4 +481,552 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       expect(Number(row.n)).toBe(0);
     });
   });
+
+  describe("agencies", () => {
+    // Picked out of the built data rather than hardcoded, so the suite keeps
+    // working as the corpus grows and the counts move.
+    let busiest;
+    let small;
+    let busiestOrder;
+
+    beforeAll(async () => {
+      [busiest] = await run(`SELECT * FROM entities ORDER BY eo_count DESC LIMIT 1`);
+      [{ eo_id: busiestOrder }] = await run(
+        `SELECT eo_id FROM entity_mentions GROUP BY 1
+         ORDER BY count(*) - count(DISTINCT entity_id) DESC, eo_id LIMIT 1`
+      );
+      [small] = await run(
+        `SELECT * FROM entities WHERE eo_count BETWEEN 4 AND 8 ORDER BY entity_id LIMIT 1`
+      );
+    });
+
+    it("has both kinds, and far more proposed than confirmed", async () => {
+      // The registry holds active agencies only, so every dissolved body is a
+      // proposed one. If that ratio ever inverts, the scan changed meaning.
+      const rows = await run(`SELECT kind, count(*) AS n FROM entities GROUP BY 1`);
+      const by = Object.fromEntries(rows.map((r) => [r.kind, Number(r.n)]));
+      expect(by.registry).toBeGreaterThan(0);
+      expect(by.proposed).toBeGreaterThan(by.registry);
+      expect(by.registry + by.proposed).toBe(MANIFEST.entity_count);
+    });
+
+    it("names no order the corpus does not hold", async () => {
+      const [row] = await run(
+        `SELECT count(*) AS n FROM entity_mentions m
+         LEFT JOIN eo_meta e USING (eo_id) WHERE e.eo_id IS NULL`
+      );
+      expect(Number(row.n)).toBe(0);
+    });
+
+    it("gives every mention an entity that can be named", async () => {
+      const [row] = await run(
+        `SELECT count(*) AS n FROM entity_mentions m
+         LEFT JOIN entities e USING (entity_id)
+         WHERE e.entity_id IS NULL OR e.display_name IS NULL`
+      );
+      expect(Number(row.n)).toBe(0);
+    });
+
+    it("keeps the counts on an entity equal to what the mentions say", async () => {
+      // Body only, on both sides. `entities.mention_count` leaves the letterhead
+      // out because the mayoral stationery names the office at the head of
+      // nearly every order; `letterhead_count` carries it, and the next test
+      // checks the two still add up to every row in the table.
+      const [row] = await run(`
+        SELECT count(*) AS wrong FROM entities e
+        JOIN (SELECT entity_id, count(DISTINCT eo_id) AS eos, count(*) AS mentions
+              FROM entity_mentions WHERE NOT in_letterhead GROUP BY 1) t USING (entity_id)
+        WHERE e.eo_count <> t.eos OR e.mention_count <> t.mentions`);
+      expect(Number(row.wrong)).toBe(0);
+    });
+
+    it("accounts for every mention, letterhead included", async () => {
+      // Nothing is dropped on the way into the tables: what the entity rows
+      // count plus what they set aside is the whole of entity_mentions.
+      const [{ total }] = await run(`SELECT count(*) AS total FROM entity_mentions`);
+      const [{ counted }] = await run(
+        `SELECT sum(mention_count) + sum(letterhead_count) AS counted FROM entities`
+      );
+      expect(Number(counted)).toBe(Number(total));
+    });
+
+    it("marks the letterhead on the mayor alone, and leaves it out of eo_entity", async () => {
+      // The whole point of the mark. Upstream judges only the mayoral masthead,
+      // so any other agency turning up here means the rule was widened without
+      // this test being revisited.
+      const marked = await run(
+        `SELECT DISTINCT entity_id FROM entity_mentions WHERE in_letterhead`
+      );
+      expect(marked.map((r) => r.entity_id)).toEqual(["office-of-the-mayor"]);
+      const [{ n }] = await run(
+        `SELECT count(*) AS n FROM eo_entity WHERE entity_id = 'office-of-the-mayor'`
+      );
+      const [{ body }] = await run(
+        `SELECT count(DISTINCT eo_id) AS body FROM entity_mentions
+         WHERE entity_id = 'office-of-the-mayor' AND NOT in_letterhead`
+      );
+      expect(Number(n)).toBe(Number(body));
+    });
+
+    it("lists the agencies in one order, in the order they are named", async () => {
+      const q = buildEntitiesForEoQuery(busiest ? await anyOrderFor(busiest.entity_id) : "");
+      const rows = await run(q.sql, q.params);
+      expect(rows.length).toBeGreaterThan(0);
+      const at = rows.map((r) => Number(r.first_at));
+      expect(at).toEqual([...at].sort((a, b) => a - b));
+      expect(rows.every((r) => r.display_name)).toBe(true);
+    });
+
+    it("returns spans that really do sit inside the order text", async () => {
+      // The whole marked-text view rests on this. Upstream proves
+      // full_text[start:end] === text; this proves the offsets survived the
+      // trip through JSON, Parquet and back.
+      const eoId = await anyOrderFor(busiest.entity_id);
+      const q = buildMentionSpansQuery(eoId);
+      const spans = await run(q.sql, q.params);
+      const [{ full_text: body }] = await run(`SELECT full_text FROM eo_text WHERE eo_id = ?`, [
+        eoId,
+      ]);
+      expect(spans.length).toBeGreaterThan(0);
+      for (const s of spans) {
+        expect(Number(s.start)).toBeGreaterThanOrEqual(0);
+        expect(Number(s.end)).toBeLessThanOrEqual(body.length);
+        expect(Number(s.end)).toBeGreaterThan(Number(s.start));
+      }
+    });
+
+    it("fetches one agency's own record", async () => {
+      const q = buildEntityQuery(busiest.entity_id);
+      const [row] = await run(q.sql, q.params);
+      expect(row.entity_id).toBe(busiest.entity_id);
+      expect(row.display_name).toBeTruthy();
+    });
+
+    it("returns nothing, rather than throwing, for an agency that does not exist", async () => {
+      const q = buildEntityQuery("x-no-such-agency-anywhere");
+      expect(await run(q.sql, q.params)).toEqual([]);
+    });
+
+    it("indexes agencies, and the count matches the list", async () => {
+      const args = { q: "", kinds: [], minOrders: 1 };
+      const rows = await run(...two(buildEntityIndexQuery({ ...args, limit: 10 })));
+      const [counted] = await run(...two(buildEntityIndexCountQuery(args)));
+      expect(rows).toHaveLength(10);
+      expect(Number(counted.n)).toBe(MANIFEST.entity_count);
+      // Most-cited first.
+      const counts = rows.map((r) => Number(r.eo_count));
+      expect(counts).toEqual([...counts].sort((a, b) => b - a));
+    });
+
+    it("finds an agency by an alternate spelling, not only by its title", async () => {
+      // The page is titled "Department of Information Technology and
+      // Telecommunications"; nobody types that.
+      const q = buildEntityIndexQuery({ q: "doitt", kinds: [], minOrders: 1, limit: 5 });
+      const rows = await run(q.sql, q.params);
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    it("filters the index by kind and by how many orders name it", async () => {
+      const q = buildEntityIndexQuery({
+        q: "",
+        kinds: ["registry"],
+        minOrders: 10,
+        limit: 100,
+      });
+      const rows = await run(q.sql, q.params);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => r.kind === "registry")).toBe(true);
+      expect(rows.every((r) => Number(r.eo_count) >= 10)).toBe(true);
+    });
+
+    it("lists an agency's orders oldest first, one row per order", async () => {
+      const q = buildEntityLineageQuery(busiest.entity_id);
+      const rows = await run(q.sql, q.params);
+      expect(rows).toHaveLength(Number(busiest.eo_count));
+      const years = rows.map((r) => Number(r.year));
+      expect(years).toEqual([...years].sort((a, b) => a - b));
+      expect(new Set(rows.map((r) => r.eo_id)).size).toBe(rows.length);
+    });
+
+    it("agrees with the entity row about when the agency is first and last named", async () => {
+      const q = buildEntityLineageQuery(busiest.entity_id);
+      const rows = await run(q.sql, q.params);
+      expect(Number(rows[0].year)).toBe(Number(busiest.first_year));
+      expect(Number(rows[rows.length - 1].year)).toBe(Number(busiest.last_year));
+    });
+
+    it("counts an agency's orders per year", async () => {
+      const q = buildEntityYearsQuery(busiest.entity_id);
+      const rows = await run(q.sql, q.params);
+      const total = rows.reduce((n, r) => n + Number(r.n), 0);
+      expect(total).toBe(Number(busiest.eo_count));
+    });
+
+    it("never puts an agency in its own co-mention graph", async () => {
+      const q = buildCooccurrenceQuery(busiest.entity_id, { limit: 24, minShared: 2 });
+      const rows = await run(q.sql, q.params);
+      expect(rows.every((r) => r.entity_id !== busiest.entity_id)).toBe(true);
+    });
+
+    it("ranks by affinity and by shared orders, and they are different questions", async () => {
+      const opts = { limit: 12 };
+      const byAffinity = await run(
+        ...two(
+          buildCooccurrenceQuery(busiest.entity_id, { ...opts, ranking: RANKINGS.AFFINITY })
+        )
+      );
+      const byShared = await run(
+        ...two(buildCooccurrenceQuery(busiest.entity_id, { ...opts, ranking: RANKINGS.SHARED }))
+      );
+      const affinities = byAffinity.map((r) => Number(r.affinity));
+      expect(affinities).toEqual([...affinities].sort((a, b) => b - a));
+      const shares = byShared.map((r) => Number(r.shared));
+      expect(shares).toEqual([...shares].sort((a, b) => b - a));
+      // If the two rankings returned the same agencies in the same order, the
+      // toggle would be decoration. On the busiest agency they never do.
+      expect(byAffinity.map((r) => r.entity_id)).not.toEqual(byShared.map((r) => r.entity_id));
+    });
+
+    it("keeps affinity a real share, never above 1", async () => {
+      const rows = await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 24 })));
+      for (const r of rows) {
+        expect(Number(r.affinity)).toBeGreaterThan(0);
+        expect(Number(r.affinity)).toBeLessThanOrEqual(1);
+        // Jaccard by definition: shared / (mine + theirs - shared).
+        const expected =
+          Number(r.shared) / (Number(busiest.eo_count) + Number(r.eo_count) - Number(r.shared));
+        expect(Number(r.affinity)).toBeCloseTo(expected, 10);
+      }
+    });
+
+    it("does not let a thin near-duplicate outrank a real partner", async () => {
+      // The measure this replaced (lift) put a 4-order fragment above the
+      // Comptroller on the Board of Estimate, because the pattern pass proposes
+      // thousands of such fragments and every one of them scores perfectly.
+      const [boe] = await run(`SELECT * FROM entities WHERE entity_id = 'x-board-of-estimate'`);
+      if (!boe) return;
+      const rows = await run(...two(buildCooccurrenceQuery(boe.entity_id, { limit: 6 })));
+      // Everything on the ring shares a real fraction of the agency's orders.
+      expect(rows.every((r) => Number(r.shared) >= 10)).toBe(true);
+    });
+
+    it("honours the floor on shared orders", async () => {
+      const q = buildCooccurrenceQuery(busiest.entity_id, { limit: 24, minShared: 5 });
+      const rows = await run(q.sql, q.params);
+      expect(rows.every((r) => Number(r.shared) >= 5)).toBe(true);
+    });
+
+    it("draws a partner that shares a single order", async () => {
+      // The default floor is ONE. 1,503 of the 2,338 agencies are named in
+      // exactly one order, so a floor of two is unreachable for them and used to
+      // empty 1,614 of the 2,338 pages. The cap on agencies-per-order is the
+      // control that filters; this number must not filter behind it.
+      const [one] = await run(
+        `SELECT e.entity_id FROM entities e
+         WHERE e.eo_count = 1
+           AND EXISTS (SELECT 1 FROM eo_entity a JOIN eo_entity b USING (eo_id)
+                       WHERE a.entity_id = e.entity_id AND b.entity_id <> e.entity_id)
+         ORDER BY e.entity_id LIMIT 1`
+      );
+      expect(one).toBeDefined();
+      const q = buildCooccurrenceQuery(one.entity_id, { limit: 24 });
+      const rows = await run(q.sql, q.params);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => Number(r.shared) === 1)).toBe(true);
+    });
+
+    it("leaves an agency empty only when its orders name nobody else", async () => {
+      // The other half of the same promise: with no cap set, an empty ring means
+      // the corpus is empty there, never that a threshold hid something.
+      const [{ n }] = await run(
+        `SELECT count(*) AS n FROM entities e
+         WHERE NOT EXISTS (SELECT 1 FROM eo_entity a JOIN eo_entity b USING (eo_id)
+                           WHERE a.entity_id = e.entity_id AND b.entity_id <> e.entity_id)`
+      );
+      // Measured 2026-08-27: 49 of 2,338, down from 1,614 under the old floor.
+      expect(Number(n)).toBeLessThan(100);
+    });
+
+    it("still draws something for an agency named in only a few orders", async () => {
+      // Affinity needs no cutoff tuned per agency: a big denominator at both
+      // ends already suppresses the letterhead and the fragment, so one floor
+      // works for a 6-order agency and a 2,449-order one alike.
+      const q = buildCooccurrenceQuery(small.entity_id, { limit: 24 });
+      expect((await run(q.sql, q.params)).length).toBeGreaterThan(0);
+    });
+
+    it("returns edges only between agencies on the ring, each pair once", async () => {
+      const nodes = await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 12 })));
+      const ids = nodes.map((n) => n.entity_id);
+      const q = buildCooccurrenceEdgesQuery(ids, { minShared: 2 });
+      const edges = await run(q.sql, q.params);
+      const onRing = new Set(ids);
+      for (const e of edges) {
+        expect(onRing.has(e.src)).toBe(true);
+        expect(onRing.has(e.dst)).toBe(true);
+        expect(e.src < e.dst).toBe(true);
+      }
+      expect(new Set(edges.map((e) => `${e.src}~${e.dst}`)).size).toBe(edges.length);
+    });
+
+    it("asks for no edges at all when the ring is too small to have any", async () => {
+      expect(buildCooccurrenceEdgesQuery([], {})).toBeNull();
+      expect(buildCooccurrenceEdgesQuery(["only-one"], {})).toBeNull();
+    });
+
+    it("narrows to the orders naming every agency chosen, never any one of them", async () => {
+      const ring = await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 2 })));
+      const [a, b] = ring.map((r) => r.entity_id);
+
+      const alone = await run(...two(buildEntityLineageQuery(busiest.entity_id)));
+      const withA = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
+      const withBoth = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, b])));
+
+      // Intersection, so every step can only take orders away.
+      expect(withA.length).toBeLessThanOrEqual(alone.length);
+      expect(withBoth.length).toBeLessThanOrEqual(withA.length);
+
+      // And every order that survives really does name all three. A union bug
+      // would pass the length checks above and fail here.
+      const wanted = new Set([busiest.entity_id, a, b]);
+      for (const o of withBoth) {
+        const named = new Set(
+          (await run(`SELECT entity_id FROM eo_entity WHERE eo_id = ?`, [o.eo_id])).map(
+            (r) => r.entity_id
+          )
+        );
+        for (const id of wanted)
+          expect(named.has(id), `${o.eo_id} is missing ${id}`).toBe(true);
+      }
+    });
+
+    it("keeps the year strip and the order list telling the same story", async () => {
+      const [a] = (
+        await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 1 })))
+      ).map((r) => r.entity_id);
+      const orders = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
+      const years = await run(...two(buildEntityYearsQuery(busiest.entity_id, [a])));
+      expect(years.reduce((n, r) => n + Number(r.n), 0)).toBe(orders.length);
+    });
+
+    it("ignores an agency named twice in the filter", async () => {
+      // A hand-edited link can repeat one. Counting it twice would raise the
+      // bar past what any order can clear and empty the list.
+      const [a] = (
+        await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 1 })))
+      ).map((r) => r.entity_id);
+      const once = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
+      const twice = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, a])));
+      const itself = await run(
+        ...two(buildEntityLineageQuery(busiest.entity_id, [busiest.entity_id]))
+      );
+      expect(twice.length).toBe(once.length);
+      expect(itself.length).toBe(Number(busiest.eo_count));
+    });
+
+    it("returns nothing at all for a combination no order satisfies", async () => {
+      const rows = await run(
+        ...two(buildEntityLineageQuery(busiest.entity_id, ["x-no-such-agency-anywhere"]))
+      );
+      expect(rows).toEqual([]);
+    });
+
+    it("says which agencies could still be added, and greys the rest", async () => {
+      const ring = (
+        await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 24 })))
+      ).map((r) => r.entity_id);
+      const [a] = ring;
+      const q = buildRingEligibilityQuery(busiest.entity_id, [a], ring);
+      const reachable = new Map(
+        (await run(q.sql, q.params)).map((r) => [r.entity_id, Number(r.n)])
+      );
+
+      // Every count it reports is a real, reachable order count...
+      for (const [id, n] of reachable) {
+        expect(n).toBeGreaterThan(0);
+        const rows = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, id])));
+        expect(rows.length).toBe(n);
+      }
+      // ...and everything it leaves out really does dead-end.
+      for (const id of ring.filter((x) => !reachable.has(x))) {
+        const rows = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, id])));
+        expect(rows.length, `${id} was greyed but returns orders`).toBe(0);
+      }
+    });
+
+    it("asks nothing when there is no ring to ask about", () => {
+      expect(buildRingEligibilityQuery("a", [], [])).toBeNull();
+    });
+
+    it("caps the orders by how many agencies they name", async () => {
+      const all = await run(...two(buildEntityLineageQuery(busiest.entity_id)));
+      const small = await run(...two(buildEntityLineageQuery(busiest.entity_id, [], 3)));
+      expect(small.length).toBeLessThan(all.length);
+
+      // Every order that survives really does name at most 3 agencies.
+      for (const o of small) {
+        const [row] = await run(`SELECT agencies FROM eo_agencies WHERE eo_id = ?`, [o.eo_id]);
+        expect(Number(row.agencies), o.eo_id).toBeLessThanOrEqual(3);
+      }
+    });
+
+    it("changes nothing at all when no cap is set", async () => {
+      // One query shape serves both cases, so this is what proves the capped
+      // path does not quietly alter the default view.
+      const flat = (rs) =>
+        rs.map(
+          (r) => `${r.entity_id}|${r.shared}|${r.eo_count}|${Number(r.affinity).toFixed(9)}`
+        );
+      const uncapped = await run(
+        ...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 10 }))
+      );
+      const huge = await run(
+        ...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 10, maxAgencies: 100000 }))
+      );
+      expect(flat(uncapped)).toEqual(flat(huge));
+    });
+
+    it("counts each agency within the cap, not across the whole corpus", async () => {
+      // The subtle one. entities.eo_count is the uncapped total; using it as the
+      // denominator under a cap divides a capped numerator by an uncapped total
+      // and shrinks every affinity on the page.
+      const uncapped = await run(
+        ...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 8 }))
+      );
+      for (const r of uncapped) {
+        const [e] = await run(`SELECT eo_count FROM entities WHERE entity_id = ?`, [
+          r.entity_id,
+        ]);
+        expect(Number(r.eo_count)).toBe(Number(e.eo_count));
+      }
+
+      const capped = await run(
+        ...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 8, maxAgencies: 4 }))
+      );
+      for (const r of capped) {
+        const [e] = await run(
+          `SELECT count(*) AS n FROM eo_entity o
+           JOIN eo_agencies a ON a.eo_id = o.eo_id AND a.agencies <= 4
+           WHERE o.entity_id = ?`,
+          [r.entity_id]
+        );
+        expect(Number(r.eo_count), r.entity_id).toBe(Number(e.n));
+        // Still a real share, and still consistent with its own parts.
+        expect(Number(r.affinity)).toBeGreaterThan(0);
+        expect(Number(r.affinity)).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it("caps the year strip and the greying too, so nothing contradicts", async () => {
+      const orders = await run(...two(buildEntityLineageQuery(busiest.entity_id, [], 5)));
+      const years = await run(...two(buildEntityYearsQuery(busiest.entity_id, [], 5)));
+      expect(years.reduce((n, r) => n + Number(r.n), 0)).toBe(orders.length);
+
+      const ring = (
+        await run(
+          ...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 12, maxAgencies: 5 }))
+        )
+      ).map((r) => r.entity_id);
+      const [a] = ring;
+      const q = buildRingEligibilityQuery(busiest.entity_id, [a], ring, 5);
+      for (const r of await run(q.sql, q.params)) {
+        const rows = await run(
+          ...two(buildEntityLineageQuery(busiest.entity_id, [a, r.entity_id], 5))
+        );
+        expect(rows.length, r.entity_id).toBe(Number(r.n));
+      }
+    });
+
+    it("names the chips without needing the graph", async () => {
+      const ring = (
+        await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 2 })))
+      ).map((r) => r.entity_id);
+      const q = buildEntityNamesQuery(ring);
+      const rows = await run(q.sql, q.params);
+      expect(rows).toHaveLength(ring.length);
+      expect(rows.every((r) => r.display_name)).toBe(true);
+      expect(buildEntityNamesQuery([])).toBeNull();
+    });
+
+    it("gives the agencies-per-order histogram a 0 column", async () => {
+      // The whole reason the query LEFT JOINs from eo_meta. eo_agencies has no
+      // row for an order that names nothing, so a plain GROUP BY over it reports
+      // a distribution with its zero cut off -- a chart that says every order
+      // names at least one agency, which is false.
+      const rows = await run(buildAgencyHistogramQuery());
+      const zero = rows.find((r) => Number(r.bucket) === 0);
+      expect(zero, "no 0 column").toBeDefined();
+      expect(Number(zero.n)).toBeGreaterThan(0);
+
+      const [{ orders }] = await run(`SELECT count(*) AS orders FROM eo_meta`);
+      const counted = rows.reduce((sum, r) => sum + Number(r.n), 0);
+      expect(counted).toBe(Number(orders));
+
+      const [{ missing }] = await run(
+        `SELECT count(*) AS missing FROM eo_meta m
+         LEFT JOIN eo_agencies a ON a.eo_id = m.eo_id
+         WHERE a.eo_id IS NULL`
+      );
+      expect(Number(zero.n)).toBe(Number(missing));
+    });
+
+    it("folds the long tail into the last bucket and nothing past it", async () => {
+      const rows = await run(buildAgencyHistogramQuery());
+      const buckets = rows.map((r) => Number(r.bucket));
+      expect(Math.max(...buckets)).toBeLessThanOrEqual(AGENCY_TAIL);
+
+      const [{ n }] = await run(
+        `SELECT count(*) AS n FROM eo_agencies WHERE agencies >= ${AGENCY_TAIL}`
+      );
+      const tail = rows.find((r) => Number(r.bucket) === AGENCY_TAIL);
+      expect(Number(tail.n)).toBe(Number(n));
+    });
+
+    it("counts each agency once however often an order repeats its name", async () => {
+      // eo_agencies is built off eo_entity, which has already collapsed the
+      // repeats. A histogram over raw mentions would be a different chart with
+      // the same title.
+      const [{ mentions }] = await run(
+        `SELECT count(*) AS mentions FROM entity_mentions WHERE eo_id = ?`,
+        [busiestOrder]
+      );
+      const [{ agencies }] = await run(`SELECT agencies FROM eo_agencies WHERE eo_id = ?`, [
+        busiestOrder,
+      ]);
+      expect(Number(agencies)).toBeLessThan(Number(mentions));
+      const [{ distinct }] = await run(
+        `SELECT count(DISTINCT entity_id) AS distinct FROM entity_mentions WHERE eo_id = ?`,
+        [busiestOrder]
+      );
+      expect(Number(agencies)).toBe(Number(distinct));
+    });
+
+    it("quotes caption numbers the histogram itself agrees with", async () => {
+      const [stats] = await run(buildAgencyCountStatsQuery());
+      const rows = await run(buildAgencyHistogramQuery());
+      const zero = rows.find((r) => Number(r.bucket) === 0);
+
+      expect(Number(stats.none)).toBe(Number(zero.n));
+      // The no-text share is a subset of the 0 column, never the whole story and
+      // never larger than it.
+      expect(Number(stats.none_no_text)).toBeGreaterThan(0);
+      expect(Number(stats.none_no_text)).toBeLessThanOrEqual(Number(stats.none));
+
+      const [{ most }] = await run(`SELECT max(agencies) AS most FROM eo_agencies`);
+      expect(Number(stats.most)).toBe(Number(most));
+      expect(Number(stats.median)).toBeGreaterThan(0);
+      expect(Number(stats.median)).toBeLessThan(Number(stats.most));
+    });
+
+    async function anyOrderFor(entityId) {
+      const [row] = await run(
+        `SELECT eo_id FROM eo_entity WHERE entity_id = ? ORDER BY eo_id LIMIT 1`,
+        [entityId]
+      );
+      return row.eo_id;
+    }
+  });
+
+  /** The builders return one object; `run` takes (sql, params). */
+  const two = ({ sql, params }) => [sql, params];
 });

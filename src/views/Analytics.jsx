@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { query } from "../duckdb/store.js";
+import { ensureEntities, query } from "../duckdb/store.js";
+import {
+  AGENCY_TAIL,
+  buildAgencyCountStatsQuery,
+  buildAgencyHistogramQuery,
+} from "../search/sql.js";
 
 /* Two-series categorical pair, validated with the dataviz palette script:
    lightness band, chroma floor, CVD separation (worst adjacent ΔE 23.2 protan),
@@ -18,10 +23,13 @@ const QUALITY_RAMP = {
   "no-text": "#1f77b4",
 };
 
-export default function Analytics() {
+export default function Analytics({ hasEntities = false }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [asTable, setAsTable] = useState(false);
+  const [agencies, setAgencies] = useState(null);
+  const [agencyErr, setAgencyErr] = useState(null);
+  const [agencyTable, setAgencyTable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +65,31 @@ export default function Analytics() {
       cancelled = true;
     };
   }, []);
+
+  // The agency tables are a separate download, and an older data checkout has no
+  // mentions at all -- so this panel loads on its own and simply does not appear
+  // when `manifest.includes_entities` is false. The rest of the page must not
+  // wait on it, which is why it does not join the Promise.all above.
+  useEffect(() => {
+    if (!hasEntities) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        await ensureEntities();
+        if (cancelled) return;
+        const [buckets, stats] = await Promise.all([
+          query(buildAgencyHistogramQuery()),
+          query(buildAgencyCountStatsQuery()),
+        ]);
+        if (!cancelled) setAgencies({ buckets, stats: stats[0] });
+      } catch (e) {
+        if (!cancelled) setAgencyErr(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasEntities]);
 
   if (err) return <div className="status err">Could not load analytics: {String(err)}</div>;
   if (!data) return <div className="empty">Loading analytics…</div>;
@@ -175,6 +208,15 @@ export default function Analytics() {
         )}
       </div>
 
+      {hasEntities ? (
+        <AgencyHistogram
+          data={agencies}
+          err={agencyErr}
+          asTable={agencyTable}
+          onToggle={() => setAgencyTable((v) => !v)}
+        />
+      ) : null}
+
       <div className="panel">
         <p className="chart-title">Text quality</p>
         <p className="chart-note">
@@ -242,5 +284,151 @@ export default function Analytics() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * How many agencies one order names.
+ *
+ * A histogram, not a ranking: the question is the shape of the spread, and the
+ * spread is the point. Half the orders name one or two bodies, and a handful of
+ * reorganization orders name dozens.
+ *
+ * One series, so no legend -- the title names it. The column colour is the same
+ * blue the year chart already validated against this surface.
+ */
+function AgencyHistogram({ data, err, asTable, onToggle }) {
+  if (err) {
+    return (
+      <div className="panel">
+        <p className="chart-title">Agencies named per order</p>
+        <div className="status err">Could not load the agency counts: {String(err)}</div>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="panel">
+        <p className="chart-title">Agencies named per order</p>
+        <div className="empty">Loading agency counts…</div>
+      </div>
+    );
+  }
+
+  const { buckets, stats } = data;
+  const total = buckets.reduce((sum, r) => sum + r.n, 0);
+  // Every bucket 0..AGENCY_TAIL gets a column, including the ones the query
+  // returned no row for. A gap in a histogram must read as a zero, not as a
+  // missing column.
+  const columns = Array.from({ length: AGENCY_TAIL + 1 }, (_, b) => ({
+    bucket: b,
+    n: buckets.find((r) => r.bucket === b)?.n ?? 0,
+  }));
+  const max = Math.max(...columns.map((r) => r.n));
+
+  const BAR = 20;
+  const GAP = 2;
+  const H = 240;
+  const PAD_L = 44;
+  const PAD_B = 48;
+  const width = PAD_L + columns.length * (BAR + GAP) + 12;
+  const scale = (v) => (v / max) * (H - PAD_B - 10);
+  const label = (b) => (b === AGENCY_TAIL ? `${AGENCY_TAIL}+` : String(b));
+
+  return (
+    <div className="panel">
+      <p className="chart-title">Agencies named per order</p>
+      <p className="chart-note">
+        How many distinct agencies each of the {total.toLocaleString()} orders names, counted
+        once per agency however often the order repeats the name. Confirmed and proposed names
+        count the same. The median order names {stats.median}; the largest names{" "}
+        {stats.most.toLocaleString()}. The 0 column holds {stats.none.toLocaleString()} orders,
+        and {stats.none_no_text.toLocaleString()} of those have no recoverable text at all — the
+        scan had nothing to read, so a 0 there is a gap in the data, not a fact about the order.
+      </p>
+      <div className="legend">
+        <button
+          className="clear"
+          style={{ width: "auto", marginLeft: "auto" }}
+          onClick={onToggle}
+        >
+          {asTable ? "Show chart" : "Show table"}
+        </button>
+      </div>
+
+      {asTable ? (
+        <div className="chartwrap">
+          <table className="kv" style={{ display: "block", maxHeight: 360, overflow: "auto" }}>
+            <tbody>
+              <tr>
+                <th align="left">Agencies named</th>
+                <th align="right">Orders</th>
+              </tr>
+              {columns.map((r) => (
+                <tr key={r.bucket}>
+                  <td>{label(r.bucket)}</td>
+                  <td align="right">{r.n.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="chartwrap">
+          <svg width={width} height={H} role="img" aria-label="Agencies named per order">
+            {[0, 0.5, 1].map((f) => {
+              const y = H - PAD_B - f * (H - PAD_B - 10);
+              return (
+                <g key={f}>
+                  <line x1={PAD_L} x2={width} y1={y} y2={y} stroke="#e6e6e1" />
+                  <text x={0} y={y + 4} fontSize="11" fill="#6d6d66">
+                    {Math.round(f * max)}
+                  </text>
+                </g>
+              );
+            })}
+            {columns.map((r, i) => {
+              const x = PAD_L + i * (BAR + GAP);
+              const h = scale(r.n);
+              return (
+                <g key={r.bucket}>
+                  <title>{`${label(r.bucket)} agencies: ${r.n.toLocaleString()} orders`}</title>
+                  {h > 0 ? (
+                    <rect
+                      x={x}
+                      y={H - PAD_B - h}
+                      width={BAR}
+                      height={h}
+                      rx="2"
+                      fill={C_REGULAR}
+                    />
+                  ) : null}
+                  {r.bucket % 5 === 0 || r.bucket === AGENCY_TAIL ? (
+                    <text
+                      x={x + BAR / 2}
+                      y={H - PAD_B + 14}
+                      fontSize="11"
+                      fill="#6d6d66"
+                      textAnchor="middle"
+                    >
+                      {label(r.bucket)}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            })}
+            <text
+              x={PAD_L + (columns.length * (BAR + GAP)) / 2}
+              y={H - 10}
+              fontSize="11"
+              fill="#6d6d66"
+              textAnchor="middle"
+            >
+              agencies named in one order
+            </text>
+          </svg>
+        </div>
+      )}
+    </div>
   );
 }

@@ -12,6 +12,19 @@ export const DEFAULT_STATE = {
   q: "",
   mode: "substring",
   eo: null,
+  // The agency page, and the index's own filters. `entity` outranks `view` the
+  // same way `eo` does -- see the dispatch in App.jsx.
+  entity: null,
+  // Agencies clicked on the ego graph. The orders list narrows to those naming
+  // the agency AND every one of these, so the whole filtered view is a link
+  // someone can send -- which is the point of keeping state in the hash at all.
+  also: [],
+  // Ignore orders naming more agencies than this. Half the orders name one or
+  // two; one names 167. Without a cap those few dominate every graph.
+  max_agencies: null,
+  entity_q: "",
+  entity_kind: [],
+  entity_min: null,
   mayor: [],
   source: [],
   text_quality: [],
@@ -21,8 +34,8 @@ export const DEFAULT_STATE = {
   isEmergency: null,
 };
 
-const LIST_KEYS = ["mayor", "source", "text_quality", "picture_tag"];
-const INT_KEYS = ["yearMin", "yearMax"];
+const LIST_KEYS = ["mayor", "source", "text_quality", "picture_tag", "entity_kind", "also"];
+const INT_KEYS = ["yearMin", "yearMax", "entity_min", "max_agencies"];
 
 export function readHash(hash = window.location.hash) {
   // Fresh arrays, not the ones on DEFAULT_STATE: a caller that mutated a

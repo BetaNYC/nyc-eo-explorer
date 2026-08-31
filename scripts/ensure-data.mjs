@@ -41,7 +41,7 @@ async function needsRebuild() {
   }
 
   const builtAt = await mtime(MANIFEST);
-  for (const name of ["eo.json", "eo_pre1974.json", "supersession.json"]) {
+  for (const name of ["eo.json", "eo_pre1974.json", "supersession.json", "mentions.json"]) {
     const p = join(CORPUS_DIR, name);
     if ((await mtime(p)) > builtAt) return `${name} changed upstream`;
   }
@@ -56,6 +56,11 @@ async function needsRebuild() {
   // Phase E output appearing for the first time is also a reason to rebuild.
   if (existsSync(join(CORPUS_DIR, "eo_pre1974.json")) && !manifest.includes_pre1974) {
     return "pre-1974 corpus appeared upstream";
+  }
+  // Same rule for the agency scan: mtime alone cannot catch a file that was
+  // absent when the manifest was written, because the manifest is newer.
+  if (existsSync(join(CORPUS_DIR, "mentions.json")) && !manifest.includes_entities) {
+    return "agency mentions appeared upstream";
   }
   return null;
 }

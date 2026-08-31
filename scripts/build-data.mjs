@@ -9,6 +9,9 @@
  *   pre1974_provenance.json - OPTIONAL. Sidecar keyed by eo_id, and the only
  *                           place the volume page numbers exist.
  *   supersession.json     - {edges: [...], dangling_citations: [...], ...}
+ *   mentions.json         - OPTIONAL. lineage/run_scan.py output: where agency
+ *                           names appear in each order, plus the registry record
+ *                           for every agency matched.
  *
  * Writes (into public/data/):
  *   eo_meta.parquet            21 locked frontmatter fields + char_count +
@@ -19,6 +22,10 @@
  *   pictures.json              OPTIONAL input, always written: the Phase E
  *                              picture crops grouped by eo_id. Empty when the
  *                              side-car has not been run.
+ *   entity_mentions.parquet    one row per (mention, entity it names), with the
+ *                              character offsets into full_text
+ *   entities.parquet           one row per agency: what to call it, the registry
+ *                              facts where they exist, and its corpus counts
  *   manifest.json              counts, sizes, generated_at, source digests
  *
  * And copies the crops themselves into public/pics/, from $EO_PICS_DIR --
@@ -41,6 +48,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DuckDBInstance } from "@duckdb/node-api";
+
+import { assertNoPrefixCollision, entityRows, mentionRows } from "./lib/entities.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -111,6 +120,42 @@ const META_FIELDS = [
   "source_pages",
   "source_page_total",
 ];
+
+/**
+ * One row per agency, in locked order.
+ *
+ * The first four columns describe the agency as this app knows it; the rest are
+ * the registry's own facts, and every one of them is NULL for a proposed agency
+ * -- which is most of the table. Declaring them is what keeps the Parquet
+ * readable: a column that is entirely NULL through an early row group is
+ * precisely what type inference gets wrong.
+ *
+ * `display_name` is what the page is titled with. For a confirmed agency it is
+ * the registry's official name; for a proposed one it is the spelling the orders
+ * use most often. `other_names` holds the rest either way.
+ */
+const ENTITY_COLUMNS = {
+  entity_id: "VARCHAR",
+  kind: "VARCHAR", // registry | proposed
+  display_name: "VARCHAR",
+  other_names: "VARCHAR[]",
+  name: "VARCHAR", // the registry's official name, NULL when proposed
+  short_name: "VARCHAR",
+  government_level: "VARCHAR",
+  classification: "VARCHAR",
+  parent_id: "VARCHAR",
+  primary_domain: "VARCHAR",
+  status: "VARCHAR",
+  founding_date: "VARCHAR", // "1965" and "1965-04-01" both occur; never a DATE
+  dissolution_date: "VARCHAR",
+  description: "VARCHAR",
+  description_source_url: "VARCHAR",
+  eo_count: "INTEGER",
+  mention_count: "INTEGER", // body only -- the letterhead is counted beside it
+  letterhead_count: "INTEGER",
+  first_year: "INTEGER",
+  last_year: "INTEGER",
+};
 
 const columnsSpec = (cols) =>
   "{" +
@@ -214,6 +259,7 @@ async function main(argv) {
   const pre1974Json = join(corpusDir, "eo_pre1974.json");
   const pageProvJson = join(corpusDir, "pre1974_provenance.json");
   const supersessionJson = join(corpusDir, "supersession.json");
+  const mentionsJson = join(corpusDir, "mentions.json");
 
   if (!existsSync(eoJson)) {
     console.error(
@@ -229,10 +275,12 @@ async function main(argv) {
   const hasPre1974 = existsSync(pre1974Json);
   const hasPageProv = existsSync(pageProvJson);
   const hasSupersession = existsSync(supersessionJson);
+  const hasMentions = existsSync(mentionsJson);
   log(`corpus:       ${corpusDir}`);
   log(`pre-1974:     ${hasPre1974 ? "present" : "absent (Phase E still running upstream)"}`);
   log(`page prov:    ${hasPageProv ? "present" : "absent"}`);
   log(`supersession: ${hasSupersession ? "present" : "absent"}`);
+  log(`mentions:     ${hasMentions ? "present" : "absent (run lineage/run_scan.py upstream)"}`);
 
   await mkdir(OUT_DIR, { recursive: true });
 
@@ -476,9 +524,109 @@ async function main(argv) {
     `);
   }
 
+  // ---- entity_mentions.parquet + entities.parquet ---------------------------
+  // Where agency names appear in each order, from `lineage/run_scan.py`
+  // upstream. Optional the same way pre-1974 and the crops are: an older
+  // checkout of the data repo has no mentions.json, and the agency pages then
+  // simply do not appear rather than the build failing.
+  //
+  // The two upstream passes are folded into ONE key space here, with `kind`
+  // saying which found each row -- see scripts/lib/entities.mjs for why both
+  // have to be shown. Every column is DECLARED, never inferred: the whole
+  // registry half of the entity row is NULL for a proposed agency, and a column
+  // that is all-NULL in an early row group is what inference gets wrong. The
+  // same argument this file already makes for `admin_note`.
+  let entityCount = 0;
+  let entityMentionCount = 0;
+  if (hasMentions) {
+    const payload = JSON.parse(await readFile(mentionsJson, "utf8"));
+    assertNoPrefixCollision(payload.agencies ?? []);
+
+    const rows = mentionRows(payload);
+    // Both counts come off eo_meta, so an order the corpus does not hold cannot
+    // quietly contribute a year -- or a row nothing can ever link to.
+    const known = new Map(
+      (await (await conn.runAndReadAll("SELECT eo_id, year FROM raw")).getRows()).map(
+        ([eoId, year]) => [String(eoId), Number(year)]
+      )
+    );
+    const orphaned = rows.filter((r) => !known.has(r.eo_id));
+    const kept = rows.filter((r) => known.has(r.eo_id));
+    if (orphaned.length > 0) {
+      const ids = [...new Set(orphaned.map((r) => r.eo_id))];
+      console.warn(
+        `WARNING: ${orphaned.length} mentions name ${ids.length} orders absent from the corpus ` +
+          `(${ids.slice(0, 3).join(", ")}${ids.length > 3 ? ", ..." : ""}) -- regenerate ` +
+          `corpus/mentions.json against this corpus`
+      );
+    }
+
+    const entities = entityRows(payload, kept, known);
+    entityMentionCount = kept.length;
+    entityCount = entities.length;
+
+    const mentionsTmp = join(OUT_DIR, ".entity_mentions.tmp.json");
+    await writeFile(mentionsTmp, JSON.stringify(kept));
+    await run(`
+      COPY (
+        SELECT * FROM read_json(${sqlStr(mentionsTmp)}, format='array',
+          maximum_object_size=134217728, columns={
+          'eo_id': 'VARCHAR', 'entity_id': 'VARCHAR', 'kind': 'VARCHAR',
+          'ambiguous': 'BOOLEAN', 'start': 'INTEGER', 'end': 'INTEGER', 'text': 'VARCHAR',
+          'in_letterhead': 'BOOLEAN'
+        }) ORDER BY eo_id, start, entity_id
+      ) TO ${sqlStr(join(OUT_DIR, "entity_mentions.parquet"))} (FORMAT parquet, COMPRESSION zstd);
+    `);
+    await unlink(mentionsTmp);
+
+    const entitiesTmp = join(OUT_DIR, ".entities.tmp.json");
+    await writeFile(entitiesTmp, JSON.stringify(entities));
+    await run(`
+      COPY (
+        SELECT * FROM read_json(${sqlStr(entitiesTmp)}, format='array',
+          maximum_object_size=134217728, columns=${columnsSpec(ENTITY_COLUMNS)})
+        ORDER BY entity_id
+      ) TO ${sqlStr(join(OUT_DIR, "entities.parquet"))} (FORMAT parquet, COMPRESSION zstd);
+    `);
+    await unlink(entitiesTmp);
+
+    const confirmed = entities.filter((e) => e.kind === "registry").length;
+    const letterhead = kept.filter((r) => r.in_letterhead).length;
+    log(
+      `entities:     ${entityCount} agencies (${confirmed} confirmed against the registry, ` +
+        `${entityCount - confirmed} proposed) across ${entityMentionCount} mentions ` +
+        `(${letterhead} of them letterhead, kept but not counted)`
+    );
+  } else {
+    // The tables exist either way, so the Parquet schema does not depend on
+    // which optional inputs happened to be on disk -- the same move made above
+    // for page_prov and for the supersession edges.
+    await run(`
+      COPY (SELECT * FROM (SELECT NULL::VARCHAR AS eo_id, NULL::VARCHAR AS entity_id,
+                   NULL::VARCHAR AS kind, NULL::BOOLEAN AS ambiguous, NULL::INTEGER AS start,
+                   NULL::INTEGER AS end, NULL::VARCHAR AS text,
+                   NULL::BOOLEAN AS in_letterhead) WHERE false)
+      TO ${sqlStr(join(OUT_DIR, "entity_mentions.parquet"))} (FORMAT parquet, COMPRESSION zstd);
+    `);
+    const nulls = Object.entries(ENTITY_COLUMNS)
+      .map(([name, type]) => `NULL::${type} AS "${name}"`)
+      .join(", ");
+    await run(`
+      COPY (SELECT * FROM (SELECT ${nulls}) WHERE false)
+      TO ${sqlStr(join(OUT_DIR, "entities.parquet"))} (FORMAT parquet, COMPRESSION zstd);
+    `);
+    log(`entities:     absent (no mentions.json at ${mentionsJson})`);
+  }
+
   // ---- manifest.json --------------------------------------------------------
   const files = {};
-  for (const name of ["eo_meta.parquet", "eo_text.parquet", "supersession_edges.parquet"]) {
+  for (const name of [
+    "eo_meta.parquet",
+    "eo_text.parquet",
+    "supersession_edges.parquet",
+    "entity_mentions.parquet",
+    "entities.parquet",
+  ]) {
     const p = join(OUT_DIR, name);
     files[name] = { bytes: (await stat(p)).size, sha256: await sha256(p) };
   }
@@ -498,6 +646,9 @@ async function main(argv) {
     record_count: total,
     edge_count: edgeCount,
     includes_pre1974: hasPre1974,
+    includes_entities: hasMentions,
+    entity_count: entityCount,
+    entity_mention_count: entityMentionCount,
     page_provenance_count: pageProvCount,
     picture_count: pictures.count,
     picture_orders: Object.keys(pictures.by_eo).length,
@@ -516,7 +667,8 @@ async function main(argv) {
   }
   log(`  ${join(OUT_DIR, "manifest.json")}`);
   log(
-    `\n${total} orders (${manifest.year_min}-${manifest.year_max}), ${edgeCount} supersession edges`
+    `\n${total} orders (${manifest.year_min}-${manifest.year_max}), ${edgeCount} supersession edges, ` +
+      `${entityCount} agencies`
   );
   return 0;
 }

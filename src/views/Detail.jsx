@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
+import { KIND_LABEL, KIND_TITLE, kindClass, markSegments } from "../data/entities.js";
 import { longLabel } from "../data/labels.js";
 import { cropUrl, onCropError, picturesFor, tagLabel } from "../data/pictures.js";
-import { ensureText, query } from "../duckdb/store.js";
+import { ensureEntities, ensureText, query } from "../duckdb/store.js";
+import { buildEntitiesForEoQuery, buildMentionSpansQuery } from "../search/sql.js";
 import { renderMarkdown } from "../markdown.js";
 import { localPdfUrl } from "../paths.js";
 
@@ -12,6 +14,25 @@ import { localPdfUrl } from "../paths.js";
  * the cost lands on whoever opens it rather than on every page load.
  */
 const PdfViewer = lazy(() => import("../components/PdfViewer.jsx"));
+
+const TEXT_RENDERED = "rendered";
+const TEXT_MARKED = "marked";
+const TEXT_RAW = "raw";
+
+/** `query()` takes (sql, params); the builders return one object. */
+const args = ({ sql, params }) => [sql, params];
+
+/**
+ * What a marked span is, for the tooltip.
+ *
+ * A span can carry more than one id: a name that pins down no single agency
+ * names every candidate, and pass two can propose a phrase containing a
+ * confirmed name. Both are listed rather than one being chosen.
+ */
+function namesFor(ids, agencies) {
+  const byId = new Map(agencies.map((a) => [a.entity_id, a.display_name]));
+  return ids.map((id) => byId.get(id) ?? id).join(" · ");
+}
 
 const fmtDate = (d) =>
   d
@@ -41,19 +62,47 @@ const pdfHref = (row) =>
     ? `${row.source_pdf_url}#page=${row.source_page_start}`
     : row.source_pdf_url;
 
-export default function Detail({ eoId, onOpen, onBack }) {
+export default function Detail({ eoId, onOpen, onOpenEntity, onBack }) {
   const [row, setRow] = useState(null);
   const [text, setText] = useState(null);
   const [edges, setEdges] = useState({ out: [], in: [] });
   const [pics, setPics] = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [spans, setSpans] = useState([]);
   const [err, setErr] = useState(null);
-  const [raw, setRaw] = useState(false);
+  // Three ways to read the same order, not two. "Agencies" had to be its own
+  // mode rather than a marking added to Raw: the offsets were recorded against
+  // full_text, and full_text_raw is a different string in ~8% of records, where
+  // the very same offsets would mark the wrong characters.
+  const [textMode, setTextMode] = useState(TEXT_RENDERED);
   const [sideBySide, setSideBySide] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setPics([]);
     picturesFor(eoId).then((p) => !cancelled && setPics(p));
+    return () => {
+      cancelled = true;
+    };
+  }, [eoId]);
+
+  // Its own effect, and its own catch: the agency tables are optional upstream,
+  // and an order must still render every other panel when they are absent.
+  useEffect(() => {
+    let cancelled = false;
+    setAgencies([]);
+    setSpans([]);
+    (async () => {
+      await ensureEntities();
+      if (cancelled) return;
+      const [named, at] = await Promise.all([
+        query(...args(buildEntitiesForEoQuery(eoId))),
+        query(...args(buildMentionSpansQuery(eoId))),
+      ]);
+      if (cancelled) return;
+      setAgencies(named);
+      setSpans(at);
+    })().catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -127,6 +176,13 @@ export default function Detail({ eoId, onOpen, onBack }) {
   // that one lands in the browser's own viewer.
   const localPdf = localPdfUrl(row.pdf_path);
   const pdfHrefLocal = localPdfUrl(row.pdf_path, row.source_page_start);
+
+  // Against full_text and NEVER full_text_raw. The offsets were recorded on
+  // full_text; the raw column is the pre-cleanup text and is a different string
+  // in ~8% of records, where the same offsets would mark the wrong characters.
+  // So the raw toggle shows full_text when there is anything to mark, and says
+  // as much rather than marking the wrong span.
+  const marks = text ? markSegments(text.full_text, spans) : [];
 
   return (
     <div className="detail">
@@ -210,6 +266,42 @@ export default function Detail({ eoId, onOpen, onBack }) {
         </div>
       ) : null}
 
+      {agencies.length > 0 ? (
+        <div className="panel">
+          <h2>Agencies named in this order</h2>
+          {/* In the order they are first named, so reading this panel tracks
+              reading the order. The badge is not decoration: half of these were
+              matched against a register of agencies and half are phrases that
+              merely look like agency names, and a reader must never have to
+              guess which. */}
+          <p className="pics-note">
+            In the order they appear in the text. <strong>Confirmed</strong> matched
+            BetaNYC&rsquo;s agency registry; <strong>Proposed</strong> only looks like an agency
+            name and has not been reviewed — which is the only way a body that no longer exists
+            can show up, since the registry lists agencies active today.
+          </p>
+          {agencies.map((a) => (
+            <div className="edge" key={a.entity_id}>
+              <a href={`#entity=${a.entity_id}`} onClick={() => onOpenEntity(a.entity_id)}>
+                {a.display_name}
+              </a>
+              <span className={kindClass(a.kind)} title={KIND_TITLE[a.kind]}>
+                {KIND_LABEL[a.kind]}
+              </span>
+              {a.mentions > 1 ? <span className="muted">{a.mentions} mentions</span> : null}
+              {a.ambiguous ? (
+                <span
+                  className="badge"
+                  title="This name is used by more than one agency, and the scan refused to pick one. It is shown on every candidate's page."
+                >
+                  more than one agency
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {pics.length > 0 ? (
         <div className="panel">
           <h2>Pictures on these pages</h2>
@@ -245,10 +337,28 @@ export default function Detail({ eoId, onOpen, onBack }) {
           <h2>Full text</h2>
           {text ? (
             <div className="modes small">
-              <button aria-pressed={!raw} onClick={() => setRaw(false)}>
+              <button
+                aria-pressed={textMode === TEXT_RENDERED}
+                onClick={() => setTextMode(TEXT_RENDERED)}
+              >
                 Rendered
               </button>
-              <button aria-pressed={raw} onClick={() => setRaw(true)}>
+              {marks.length > 1 ? (
+                <button
+                  aria-pressed={textMode === TEXT_MARKED}
+                  onClick={() => setTextMode(TEXT_MARKED)}
+                  title="The cleaned text with every agency name marked where the scan found it."
+                >
+                  {/* Not "Agencies": that is already the name of a tab, and two
+                      controls reading the same but meaning different things is
+                      exactly what a screen reader cannot disambiguate. */}
+                  Names marked
+                </button>
+              ) : null}
+              <button
+                aria-pressed={textMode === TEXT_RAW}
+                onClick={() => setTextMode(TEXT_RAW)}
+              >
                 Raw
               </button>
             </div>
@@ -271,11 +381,31 @@ export default function Detail({ eoId, onOpen, onBack }) {
         <div className={sideBySide ? "sxs" : undefined}>
           {!text ? (
             <p className="empty">Loading text…</p>
-          ) : raw ? (
+          ) : textMode === TEXT_RAW ? (
             // The raw view matters here: this is OCR output, and anyone checking
             // the transcription against the scan needs the characters as stored,
             // not a rendering of them. full_text_raw is the pre-cleanup text.
             <pre className="fulltext">{text.full_text_raw ?? text.full_text}</pre>
+          ) : textMode === TEXT_MARKED ? (
+            // The scan records where each agency name sits in `full_text` and
+            // proves `full_text[start:end] === text` for all 23,504 finds, so
+            // this is a slice at known positions rather than a second search of
+            // the text.
+            //
+            // Not offered on the rendered view: that goes through marked and
+            // DOMPurify, and lining character offsets up with its output would
+            // mean injecting markup into untrusted scan text.
+            <pre className="fulltext">
+              {marks.map((seg, i) =>
+                seg.marked ? (
+                  <mark className="mark-agency" key={i} title={namesFor(seg.ids, agencies)}>
+                    {seg.text}
+                  </mark>
+                ) : (
+                  <span key={i}>{seg.text}</span>
+                )
+              )}
+            </pre>
           ) : (
             <div
               className="fulltext markdown"

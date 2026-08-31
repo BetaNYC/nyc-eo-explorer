@@ -66,6 +66,8 @@ rebuilt whenever the corpus changes upstream.
 | `eo_meta.parquet`            | ~80 KB  | One row per order: dates, mayor, title, flags     |
 | `eo_text.parquet`            | ~1.7 MB | The full text of every order (~9 MB, compressed)  |
 | `supersession_edges.parquet` | ~4 KB   | Which orders revoked or amended which             |
+| `entity_mentions.parquet`    | ~230 KB | Where each agency is named, with exact offsets    |
+| `entities.parquet`           | ~100 KB | One row per agency: names, registry facts, counts |
 | `pictures.json`              | ~150 KB | Seals and signatures clipped out of the old scans |
 | `manifest.json`              | ~1 KB   | Counts, year range, checksums                     |
 
@@ -125,6 +127,75 @@ whichever order was printed on that page. The **Pictures tab** turns that around
 searches by text to show images: look up `robert moses` and you get the seals and
 signatures from the three orders that name him.
 
+### Agencies
+
+The corpus repo also publishes `corpus/mentions.json` — the output of its `lineage/`
+scan, which reads every order looking for the name of a city agency. The **Agencies
+tab** is that data: 2,345 bodies named across 23,756 mentions, each one linking to
+every order that names it.
+
+Two passes produce it, and the difference between them is on screen everywhere:
+
+- **Confirmed** — the name matched [BetaNYC's agency
+  registry](https://github.com/BetaNYC/ny-gov-web-registry). 178 agencies, carrying
+  the registry's acronym, alternate and former names, classification, website, and
+  the agency's own description of itself. The former names are the useful half: the
+  registry records "Office of Emergency Management" against NYCEM and "Department of
+  Education" against NYC Public Schools, which is how a 2005 order reaches the agency
+  that exists today.
+- **Proposed** — the phrase only _looks_ like an agency name. Not reviewed by anyone.
+
+Both are shown, and that is the whole point. The registry lists agencies that exist
+**today** and marks all 317 of them active, so it cannot name a body that was shut
+down. The Board of Estimate, the Bureau of the Budget, DoITT — every one of them is a
+Proposed name, and every one of them is most of the history. Hiding them would leave
+a clean list with nothing in it worth reading. The cost is that pattern matching also
+proposes junk, which is why the index hides names seen in fewer than three orders by
+default and every row carries its badge.
+
+**An agency page** shows the run of orders that name it, per year, with the mayor of
+each year underneath. Where a run starts and stops is real evidence: the Board of
+Estimate runs 1946 to 1990 and then stops, because it was abolished in 1990. It is
+not proof — the Charter and Local Law also create and abolish agencies, and neither
+is in this corpus.
+
+**Cap the order size** to keep a handful of orders from pairing everything with
+everything. Half the orders name one or two agencies, but the tail runs to 167 in a
+single order — delegations of authority that list the whole city government. One
+such order manufactures 13,861 agency pairs on its own, so a few of them dominate
+every graph and make co-mention look like a property of the corpus rather than of
+the orders. "Ignore orders naming more than N agencies" drops them, and it narrows
+the order list to match — the graph and the list are always built from the same set.
+
+Under a cap each agency is recounted **within** it. Using the corpus-wide
+`eo_count` as the denominator would divide a capped numerator by an uncapped total
+and quietly shrink every share on the page.
+
+**The graph is also the filter.** One click on a ring node narrows the order list
+to those naming that agency _as well_; click more to narrow further. Anything that
+would leave no orders greys out before you click it, so a dead end is visible rather
+than discovered — and the whole filtered view is a link, since the selection lives in
+the URL hash like everything else. Double-click opens an agency's own page. On the
+Board of Estimate, adding the Comptroller and the City Council cuts 142 orders to 18,
+and almost every one is budget appropriations — which is what those three bodies did
+together.
+
+**"Named alongside"** is the co-mention graph: of every order naming either agency,
+the share that names both ([Jaccard](https://en.wikipedia.org/wiki/Jaccard_index)).
+Not a plain count, because "Office of the Mayor" is on the letterhead of 2,449 orders
+and would top all 2,345 graphs. Lift was tried first and broke the other way — a
+4-order fragment outranked the Comptroller on the Board of Estimate — so the measure
+has to have a large denominator at _both_ ends. **Most shared** switches to the plain
+count, which is worth seeing precisely because it shows what the default is
+suppressing.
+
+On an order, **Agencies named in this order** lists them in the order they appear,
+and the **Names marked** view of the text marks each one where the scan found it. The
+scan records character offsets into `full_text` and proves `full_text[start:end] ==
+text` for all 23,504 finds, so that view is a slice at known positions rather than a
+second search — which is why it also marks names wrapped across a line break, as OCR
+of a PDF constantly produces.
+
 ### Gotchas worth knowing
 
 - **Column types are written explicitly in the build script.** EO numbers are
@@ -136,6 +207,12 @@ signatures from the three orders that name him.
 - **Cross-origin range requests need help.** CORS hides `Accept-Ranges` from pdf.js,
   so without the custom transport in `PdfViewer` it downloads entire 49 MB volumes
   before showing a page.
+- **The agency data is optional too.** No `corpus/mentions.json` upstream means no
+  Agencies tab, rather than a failed build. Regenerate it there with
+  `python lineage/run_scan.py --mentions-out corpus/mentions.json` and commit it.
+- **A bare acronym is not an agency name.** The upstream pattern pass only proposes
+  phrases built on a head-word (Department, Office, Board…), so "DoITT" written on
+  its own is never proposed. The word is still in the orders — Search finds it.
 
 ## Testing
 

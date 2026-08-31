@@ -75,3 +75,27 @@ describe("hash round-trip", () => {
     expect(readHash("#").isEmergency).toBe(null);
   });
 });
+
+describe("graph selection in the hash", () => {
+  it("round-trips the agencies chosen on the graph", () => {
+    const state = readHash("#entity=x-board-of-estimate&also=nyc-council,nyc-comptroller");
+    expect(state.entity).toBe("x-board-of-estimate");
+    expect(state.also).toEqual(["nyc-comptroller", "nyc-council"]);
+    // Sorted on the way in and on the way out, so the same set of agencies
+    // always produces the same link no matter what order they were clicked.
+    // (The separator rides through URLSearchParams percent-encoded, as every
+    // other multi-value key in this app already does.)
+    expect(readHash(writeHash(state)).also).toEqual(["nyc-comptroller", "nyc-council"]);
+    expect(writeHash(state)).toBe(
+      writeHash(readHash("#entity=x-board-of-estimate&also=nyc-comptroller,nyc-council"))
+    );
+  });
+
+  it("leaves an empty selection out of the link entirely", () => {
+    expect(writeHash({ ...DEFAULT_STATE, entity: "oti", also: [] })).toBe("#entity=oti");
+  });
+
+  it("survives a hand-edited link with a trailing comma", () => {
+    expect(readHash("#entity=oti&also=doc,").also).toEqual(["doc"]);
+  });
+});
