@@ -18,10 +18,21 @@ export default function Browse({ state, filters, hasText, onOpen }) {
   const [snips, setSnips] = useState({});
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState(null);
+  const [page, setPage] = useState(0);
 
   const parsed = useMemo(() => parseQuery(state.q), [state.q]);
   const searching = !parsed.isEmpty;
   const key = JSON.stringify([filters, state.q, state.mode]);
+
+  // A new query or a new filter means a new first page. Adjusted during render
+  // rather than in an effect, the same way the gallery resets its limit: an
+  // effect would let the fetch below run once at the stale offset and again at
+  // the reset one, which is two queries and a visible flash of the wrong page.
+  const [lastKey, setLastKey] = useState(key);
+  if (key !== lastKey) {
+    setLastKey(key);
+    setPage(0);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -37,7 +48,7 @@ export default function Browse({ state, filters, hasText, onOpen }) {
         // `hasText` prop, which is a render-time snapshot and can lag.
         if (searching) await ensureText();
         if (cancelled) return;
-        const args = { mode: state.mode, parsed, filters, limit: PAGE };
+        const args = { mode: state.mode, parsed, filters, limit: PAGE, offset: page * PAGE };
         const q = buildSearchQuery(args);
         const c = buildCountQuery(args);
         const [resultRows, countRows] = await Promise.all([
@@ -78,7 +89,7 @@ export default function Browse({ state, filters, hasText, onOpen }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, hasText, searching]);
+  }, [key, page, hasText, searching]);
 
   if (err) {
     return (
@@ -93,6 +104,20 @@ export default function Browse({ state, filters, hasText, onOpen }) {
     return <div className="empty">Loading the text index…</div>;
   }
 
+  // count(*) arrives from DuckDB as a BigInt, which throws on arithmetic with a
+  // Number. Widen it once here rather than at each use.
+  const n = Number(total ?? 0);
+  const pages = Math.max(1, Math.ceil(n / PAGE));
+  const first = page * PAGE + 1;
+  const last = page * PAGE + rows.length;
+
+  const goto = (next) => {
+    setPage(next);
+    // A page of results is taller than the viewport, so landing at the bottom
+    // of the new page reads as nothing having happened.
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
     <>
       <div className="resulthead">
@@ -100,9 +125,11 @@ export default function Browse({ state, filters, hasText, onOpen }) {
           <span>Searching…</span>
         ) : (
           <span>
-            <strong>{(total ?? 0).toLocaleString()}</strong> {total === 1 ? "order" : "orders"}
+            <strong>{n.toLocaleString()}</strong> {n === 1 ? "order" : "orders"}
             {searching ? " matching" : ""}
-            {total > rows.length ? ` · showing first ${rows.length}` : ""}
+            {n > rows.length
+              ? ` · showing ${first.toLocaleString()}–${last.toLocaleString()}`
+              : ""}
           </span>
         )}
       </div>
@@ -142,6 +169,20 @@ export default function Browse({ state, filters, hasText, onOpen }) {
           <Snippet result={snips[r.eo_id]} />
         </article>
       ))}
+
+      {pages > 1 ? (
+        <nav className="pager" aria-label="Result pages">
+          <button disabled={page === 0 || busy} onClick={() => goto(page - 1)}>
+            ← Previous
+          </button>
+          <span aria-live="polite">
+            Page {(page + 1).toLocaleString()} of {pages.toLocaleString()}
+          </span>
+          <button disabled={page >= pages - 1 || busy} onClick={() => goto(page + 1)}>
+            Next →
+          </button>
+        </nav>
+      ) : null}
     </>
   );
 }

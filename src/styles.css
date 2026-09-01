@@ -820,6 +820,35 @@ img.cropmissing {
   padding: 8px 16px;
 }
 
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 18px 0 4px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.pager button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 14px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.pager button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pager button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ---------- lightbox ---------- */
 
 .lightbox {
