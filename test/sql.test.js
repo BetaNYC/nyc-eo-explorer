@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { parseQuery } from "../src/search/parseQuery.js";
 import {
   MODES,
+  buildEntityEventsQuery,
+  buildEntityIndexCountQuery,
+  buildEntityIndexQuery,
   buildFacetQuery,
   buildFilters,
   buildPictureCountQuery,
@@ -275,5 +278,66 @@ describe("buildPictureTagQuery", () => {
     const filters = { pictureTags: ["sig"] };
     buildPictureTagQuery({ mode: MODES.SUBSTRING, parsed: noQuery, filters });
     expect(filters.pictureTags).toEqual(["sig"]);
+  });
+});
+
+describe("buildEntityEventsQuery", () => {
+  const { sql, params } = buildEntityEventsQuery("x-board-of-estimate");
+
+  it("binds the id on both sides and never interpolates it", () => {
+    // An entity id comes off the URL hash, which anyone can edit.
+    expect(params).toEqual(["x-board-of-estimate", "x-board-of-estimate"]);
+    expect(sql).not.toContain("x-board-of-estimate");
+  });
+
+  it("matches either side, because both are the agency's own history", () => {
+    // The body a department was renamed FROM belongs on its page as much as the
+    // one it was renamed to.
+    expect(sql).toContain("v.from_id = ? OR v.to_id = ?");
+  });
+
+  it("names the counterpart from the entities table, not from the event", () => {
+    // The order writes "DOC" and the page is titled "Department of Correction".
+    // Joining here is what saves the view a round trip per row.
+    expect(sql).toContain("LEFT JOIN entities f");
+    expect(sql).toContain("LEFT JOIN entities t");
+  });
+
+  it("orders by date and not by year, so a year's own sequence is right", () => {
+    expect(sql).toContain("ORDER BY d.year, d.date_signed NULLS LAST");
+  });
+});
+
+describe("the agency index and the lineage filter", () => {
+  it("selects the count always, and filters on it only when asked", () => {
+    // The column is on every row because the list prints it. The predicate is
+    // what the toggle adds.
+    const { sql } = buildEntityIndexQuery({ q: "", kinds: [], minOrders: 1 });
+    expect(sql).toContain("e.event_count");
+    expect(sql).not.toContain("e.event_count > 0");
+  });
+
+  it("is a predicate and not a join", () => {
+    // `event_count` rides on the entity row precisely so the index and its count
+    // can answer "has any lineage" without touching the event table -- both run
+    // this on every keystroke.
+    const { sql, params } = buildEntityIndexQuery({
+      q: "",
+      kinds: [],
+      minOrders: 1,
+      hasLineage: true,
+    });
+    expect(sql).toContain("e.event_count > 0");
+    expect(sql).not.toContain("agency_events");
+    expect(params).toEqual([]);
+  });
+
+  it("narrows the count the same way it narrows the list", () => {
+    // A count that disagrees with its list is worse than no count.
+    const args = { q: "board", kinds: [], minOrders: 3, hasLineage: true };
+    const list = buildEntityIndexQuery(args);
+    const count = buildEntityIndexCountQuery(args);
+    expect(count.sql).toContain("e.event_count > 0");
+    expect(count.params).toEqual(list.params);
   });
 });

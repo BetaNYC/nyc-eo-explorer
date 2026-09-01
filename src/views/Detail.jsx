@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
+import HashLink from "../components/HashLink.jsx";
+
 import { KIND_LABEL, KIND_TITLE, kindClass, markSegments } from "../data/entities.js";
 import { longLabel } from "../data/labels.js";
 import { cropUrl, onCropError, picturesFor, tagLabel } from "../data/pictures.js";
@@ -245,9 +247,9 @@ export default function Detail({ eoId, onOpen, onOpenEntity, onBack, backLabel }
             <div className="edge" key={`o${i}`}>
               <span className="verb">{e.verb}</span>
               {e.target && e.year ? (
-                <a href={`#eo=${e.target}`} onClick={() => onOpen(e.target)}>
+                <HashLink href={`#eo=${e.target}`} onOpen={() => onOpen(e.target)}>
                   {e.target}
-                </a>
+                </HashLink>
               ) : (
                 <span className="unresolved">{e.target} (citation unresolved)</span>
               )}
@@ -257,9 +259,9 @@ export default function Detail({ eoId, onOpen, onOpenEntity, onBack, backLabel }
           {edges.in.map((e, i) => (
             <div className="edge" key={`i${i}`}>
               <span className="verb">{e.verb} by</span>
-              <a href={`#eo=${e.actor}`} onClick={() => onOpen(e.actor)}>
+              <HashLink href={`#eo=${e.actor}`} onOpen={() => onOpen(e.actor)}>
                 {e.actor}
-              </a>
+              </HashLink>
               {e.partial ? <span className="badge">in part</span> : null}
             </div>
           ))}
@@ -282,9 +284,12 @@ export default function Detail({ eoId, onOpen, onOpenEntity, onBack, backLabel }
           </p>
           {agencies.map((a) => (
             <div className="edge" key={a.entity_id}>
-              <a href={`#entity=${a.entity_id}`} onClick={() => onOpenEntity(a.entity_id)}>
+              <HashLink
+                href={`#entity=${a.entity_id}`}
+                onOpen={() => onOpenEntity(a.entity_id)}
+              >
                 {a.display_name}
-              </a>
+              </HashLink>
               <span className={kindClass(a.kind)} title={KIND_TITLE[a.kind]}>
                 {KIND_LABEL[a.kind]}
               </span>

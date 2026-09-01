@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import HashLink from "../components/HashLink.jsx";
 import Lightbox from "../components/Lightbox.jsx";
 import { shortLabel } from "../data/labels.js";
 import { PICTURE_TAGS, cropUrl, onCropError, tagKey, tagLabel } from "../data/pictures.js";
@@ -196,19 +197,14 @@ export default function Pictures({ state, filters, hasText, hasPictures, onOpen,
               <span className={`badge pic-${p.tag ?? "none"}`}>{tagLabel(p.tag)}</span>
               <span className="muted">p. {p.page}</span>
             </figcaption>
-            {/* A real href, so middle-click and copy-link work; the handler is
-                what actually navigates. */}
-            <a
+            <HashLink
               className="picorder"
               href={`#eo=${p.eo_id}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(p.eo_id);
-              }}
+              onOpen={() => onOpen(p.eo_id)}
               title={p.title ?? undefined}
             >
               {shortLabel(p)} <span className="muted">{p.year}</span>
-            </a>
+            </HashLink>
           </figure>
         ))}
       </div>

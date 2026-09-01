@@ -196,9 +196,25 @@ const emptyRegistryFields = () => Object.fromEntries(REGISTRY_FIELDS.map((f) => 
  * -- `eo_count`, `mention_count`, `first_year`, `last_year`, and which spelling
  * titles the page -- is taken from the body only. `letterhead_count` carries the
  * rest, so the total is still recoverable and nothing is hidden.
+ *
+ * `event_count` is folded in here for one reason: the agency index filters on it,
+ * and a filter that has to join 900 rows against an event table to answer "does
+ * this agency have any lineage at all" is a join for a boolean. It counts the
+ * events naming the agency on either SIDE and never the ones that merely name it
+ * as a parent -- see `eventRows`. An older checkout of the data repo has no
+ * events at all, and every agency then gets 0, which is the truth there.
  */
-export function entityRows(payload, rows, yearByEoId) {
+export function entityRows(payload, rows, yearByEoId, events = []) {
   const agencyById = new Map((payload.agencies ?? []).map((a) => [a.id, a]));
+  const eventCount = new Map();
+  for (const e of events ?? []) {
+    // Deduplicated per event, because an event can name one agency on BOTH
+    // sides: the registry gives DoITT and OTI the same slug, so the 2022 rename
+    // is `oti -> oti`. That is one event in its history, not two.
+    for (const id of new Set([e.from_id, e.to_id].filter(Boolean))) {
+      eventCount.set(id, (eventCount.get(id) ?? 0) + 1);
+    }
+  }
 
   const acc = new Map();
   for (const r of rows) {
@@ -265,6 +281,7 @@ export function entityRows(payload, rows, yearByEoId) {
       letterhead_count: e.letterhead_count,
       first_year: e.first_year,
       last_year: e.last_year,
+      event_count: eventCount.get(e.entity_id) ?? 0,
     });
   }
 
@@ -288,4 +305,116 @@ export function collapseSpaces(text) {
     .split(/\s+/)
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * The three roles a reorganization sentence can fill, from `lineage/mentions.py`.
+ *
+ * Keep the strings in step with upstream. They are the whole join.
+ */
+export const ROLE_FROM = "from";
+export const ROLE_TO = "to";
+export const ROLE_PARENT = "parent";
+
+/**
+ * The id an event role points at, or null when it points at no page here.
+ *
+ * A role carries `agency_id` when the name is on the registry list and null when
+ * pass two found it. A null is NOT a failure -- the registry holds agencies that
+ * are active today, so a body that was abolished can only ever arrive that way,
+ * and those are most of the history. Minting the same id the mention pass mints
+ * lands nearly every one of them on a page that already exists.
+ *
+ * Either way the id has to BE in the table. An agency the orders never name in
+ * their body has no page, and pointing at one would be a link to nothing.
+ */
+function roleEntityId(role, known) {
+  if (!role) return null;
+  const id = role.agency_id || proposedEntityId(role.name);
+  return id && known.has(id) ? id : null;
+}
+
+/**
+ * One row per reorganization event: what happened, to whom, and the sentence
+ * that says so.
+ *
+ * Upstream gives each event 1 or 2 roles and never fills the same role twice, so
+ * an event flattens to one row rather than to a row per role. That is what makes
+ * "every event naming this agency" a single scan of two columns instead of a
+ * self-join. It is a promise upstream tests over its whole corpus, and it has to
+ * be: a sentence naming three bodies arrives as three events sharing one span, and
+ * were it ever to arrive as one event with three `to` roles, the Map below would
+ * keep the last of them and drop the other two without a word.
+ *
+ * **The `parent` role is resolved, but it is not lineage.** "There is hereby
+ * established, in the Office of the Mayor, an Office of X" names the Office of
+ * the Mayor 59 times across the corpus, and counting those as its own lineage
+ * would say the office was created and renamed dozens of times when what the
+ * sentences record is containment. So `parent_id` is carried and queried on its
+ * own -- it is what an agency page's "Contains" list reads -- while `event_count`
+ * and the chain still count only the two SIDES. Containment and succession are
+ * different questions and they are answered separately.
+ *
+ * `start`/`end` are the sentence's span in the order's `full_text`, and `text` is
+ * that slice -- the same read-back promise the mentions keep. It is printed
+ * verbatim because the scan matches surface verbs and gets some of them wrong:
+ * 1963-EO-036 yields a `renames` event out of a sentence that designates a man as
+ * a chairman. A reader who can see the sentence can throw that one out.
+ */
+export function eventRows(payload, entityIds, knownEoIds = null) {
+  const known = entityIds instanceof Set ? entityIds : new Set(entityIds ?? []);
+  const seqByEo = new Map();
+  const rows = [];
+
+  for (const e of payload.agency_events ?? []) {
+    const eoId = e.eo_id;
+    // Numbered per order, and numbered BEFORE anything is dropped, so the
+    // sequence is upstream's own order of events within the order. Three events
+    // in the corpus share an (eo_id, start, end), so the span is not a key.
+    const seq = seqByEo.get(eoId) ?? 0;
+    seqByEo.set(eoId, seq + 1);
+    if (knownEoIds && !knownEoIds.has(eoId)) continue;
+
+    const byRole = new Map((e.roles ?? []).map((r) => [r.role, r]));
+    const from = byRole.get(ROLE_FROM);
+    const to = byRole.get(ROLE_TO);
+    const parent = byRole.get(ROLE_PARENT);
+
+    rows.push({
+      eo_id: eoId,
+      event_seq: seq,
+      kind: e.kind,
+      verb: e.verb,
+      start: e.start,
+      end: e.end,
+      text: e.text,
+      from_id: roleEntityId(from, known),
+      from_name: from ? collapseSpaces(from.name) : null,
+      from_found_by: from ? (from.found_by ?? null) : null,
+      to_id: roleEntityId(to, known),
+      to_name: to ? collapseSpaces(to.name) : null,
+      to_found_by: to ? (to.found_by ?? null) : null,
+      parent_id: roleEntityId(parent, known),
+      parent_name: parent ? collapseSpaces(parent.name) : null,
+    });
+  }
+
+  rows.sort((a, b) => a.eo_id.localeCompare(b.eo_id) || a.event_seq - b.event_seq);
+  return rows;
+}
+
+/**
+ * The roles that name a body this app has no page for.
+ *
+ * Reported by the build rather than dropped: the name is still the best record
+ * of what the order said, and the row prints it as plain text. This only exists
+ * so a growing number shows up in the build log instead of silently.
+ */
+export function unplacedRoles(events) {
+  const out = [];
+  for (const e of events ?? []) {
+    if (e.from_name && !e.from_id) out.push(e.from_name);
+    if (e.to_name && !e.to_id) out.push(e.to_name);
+  }
+  return out;
 }

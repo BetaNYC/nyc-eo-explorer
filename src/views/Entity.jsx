@@ -1,38 +1,51 @@
 import { useEffect, useState } from "react";
 
 import EgoGraph from "../components/EgoGraph.jsx";
+import HashLink from "../components/HashLink.jsx";
 import {
+  EVENT_LABEL,
   KIND_LABEL,
   KIND_PROPOSED,
   KIND_TITLE,
+  chainOf,
   classificationLabel,
+  counterpart,
   kindClass,
   otherNames,
 } from "../data/entities.js";
 import { shortLabel } from "../data/labels.js";
-import { ensureEntities, query } from "../duckdb/store.js";
+import { ensureEntities, getManifest, query } from "../duckdb/store.js";
 import {
   RANKINGS,
   buildCooccurrenceEdgesQuery,
   buildCooccurrenceQuery,
-  buildEntityLineageQuery,
+  buildEntityContainsQuery,
+  buildEntityEventsQuery,
   buildEntityNamesQuery,
+  buildEntityOrdersQuery,
   buildEntityQuery,
   buildEntityYearsQuery,
   buildRingEligibilityQuery,
 } from "../search/sql.js";
 
 /**
- * One agency: what it is, every order that names it, and who it is named with.
+ * One agency: what it is, what happened to it, every order that names it, and
+ * who it is named with.
  *
- * The lineage list is the point of the page. An agency's history in this corpus
- * IS the run of orders that mention it, and where that run starts and stops says
+ * The page answers the question twice, and the two answers are different kinds
+ * of evidence. The LINEAGE panel is the direct answer: an order says in so many
+ * words that this body was established, renamed, transferred or abolished. The
+ * orders list is the indirect one: an agency's history in this corpus is also
+ * the run of orders that mention it, and where that run starts and stops says
  * something real — the Board of Estimate runs 1946 to 1990 and then stops,
  * because it was abolished in 1990.
  *
- * Which is also the limit, and the page says so: executive orders are not the
- * only thing that creates or abolishes an agency. The Charter and Local Law do
- * it too, and neither is in this corpus.
+ * Which is also the limit, and the page says so twice over: executive orders are
+ * not the only thing that creates or abolishes an agency. The Charter and Local
+ * Law do it too, and neither is in this corpus. The lineage sentences carry a
+ * second caveat of their own — they were matched by pattern and nobody has
+ * reviewed them — which is why every one of them is shown with the sentence it
+ * came from.
  */
 
 const PAGE = 60;
@@ -67,6 +80,8 @@ export default function Entity({
   onChange,
 }) {
   const [row, setRow] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [contains, setContains] = useState(null);
   const [orders, setOrders] = useState(null);
   const [years, setYears] = useState([]);
   const [ring, setRing] = useState(null);
@@ -100,6 +115,44 @@ export default function Entity({
     };
   }, [entityId]);
 
+  // The lineage, on its own. Deliberately NOT folded into the effect below:
+  // that one re-runs whenever a reader narrows the orders, and what an order did
+  // to this agency in 1972 is not a function of which agencies are ticked on a
+  // graph today.
+  useEffect(() => {
+    let cancelled = false;
+    setEvents(null);
+    setContains(null);
+    (async () => {
+      try {
+        await ensureEntities();
+        if (cancelled) return;
+        // Two questions, asked together because they answer off one table and a
+        // reader wants both at once: what happened TO this body, and what was put
+        // INSIDE it. They stay separate panels — an office is not renamed into the
+        // thing that contains it.
+        const [history, inside] = await Promise.all([
+          run(buildEntityEventsQuery(entityId)),
+          run(buildEntityContainsQuery(entityId)),
+        ]);
+        if (!cancelled) {
+          setEvents(history);
+          setContains(inside);
+        }
+      } catch {
+        // One panel, and it is not the page. A reader who cannot get the
+        // lineage should still get the orders.
+        if (!cancelled) {
+          setEvents([]);
+          setContains([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [entityId]);
+
   // The orders, the year strip and which agencies are still reachable all
   // depend on the filter, so they move together. Kept apart from the record
   // above so choosing an agency does not blank the header and the graph.
@@ -111,12 +164,12 @@ export default function Entity({
     const alsoIds = alsoKey ? alsoKey.split(",") : [];
     (async () => {
       try {
-        const [lineage, byYear] = await Promise.all([
-          run(buildEntityLineageQuery(entityId, alsoIds, maxAgencies)),
+        const [named, byYear] = await Promise.all([
+          run(buildEntityOrdersQuery(entityId, alsoIds, maxAgencies)),
           run(buildEntityYearsQuery(entityId, alsoIds, maxAgencies)),
         ]);
         if (cancelled) return;
-        setOrders(lineage);
+        setOrders(named);
         setYears(byYear);
       } catch (e) {
         if (!cancelled) setErr(e);
@@ -348,6 +401,20 @@ export default function Entity({
         ) : null}
       </div>
 
+      {events?.length ? (
+        <Lineage
+          events={events}
+          row={row}
+          entityId={entityId}
+          onOpen={onOpen}
+          onOpenEo={onOpenEo}
+        />
+      ) : null}
+
+      {contains?.length ? (
+        <Contains events={contains} onOpen={onOpen} onOpenEo={onOpenEo} />
+      ) : null}
+
       <div className="panel">
         <p className="chart-title">Named alongside</p>
         <p className="chart-note">
@@ -505,9 +572,9 @@ export default function Entity({
             {orders.slice(0, shown).map((o) => (
               <article className="result" key={o.eo_id}>
                 <h3>
-                  <a href={`#eo=${o.eo_id}`} onClick={() => onOpenEo(o.eo_id)}>
+                  <HashLink href={`#eo=${o.eo_id}`} onOpen={() => onOpenEo(o.eo_id)}>
                     {shortLabel(o)}
-                  </a>
+                  </HashLink>
                   {o.is_emergency ? <span className="badge">emergency</span> : null}
                   {o.mentions > 1 ? <span className="badge">{o.mentions} mentions</span> : null}
                 </h3>
@@ -640,3 +707,278 @@ function YearStrip({ years }) {
 }
 
 const run = ({ sql, params }) => query(sql, params);
+
+/**
+ * What the orders did to this agency: the chain, then the sentences.
+ *
+ * Rendered only when there is at least one event, because an empty "Lineage"
+ * heading on 2,097 of the 2,339 agency pages would say the app had lost
+ * something rather than that the corpus never recorded it.
+ */
+function Lineage({ events, row, entityId, onOpen, onOpenEo }) {
+  const unresolved = Number(getManifest()?.unresolved_event_count ?? 0);
+  return (
+    <div className="panel">
+      <p className="chart-title">Lineage</p>
+      <p className="chart-note">
+        Sentences in the orders that establish, rename, transfer, merge or abolish this body.
+        Matched by pattern, and nobody has reviewed them — the sentence is printed under each
+        one so you can judge it yourself, because the scan reads a verb and not a meaning, and
+        it does mistake a man being designated a chairman for an agency being renamed. Executive
+        orders are also not the whole record: the Charter and Local Law create and abolish
+        agencies too, and neither is in this corpus.
+        {unresolved > 0 ? (
+          <>
+            {" "}
+            {unresolved.toLocaleString()} further reorganization sentences name no agency this
+            app can place, and are not shown anywhere.
+          </>
+        ) : null}
+      </p>
+
+      <Chain events={events} row={row} entityId={entityId} onOpen={onOpen} />
+
+      {events.map((e) => (
+        <div className="edge" key={eventKey(e)}>
+          <span className="verb">{EVENT_LABEL[e.kind] ?? e.kind}</span>
+          <div className="lineage-body">
+            <p className="lineage-what">
+              <Other event={e} entityId={entityId} onOpen={onOpen} />
+              {/* Plain text, never a link. A body established "in the Office of
+                  the Mayor" is a fact about the body, not about the office, and
+                  the office's own page says nothing about it. */}
+              {e.parent_name ? <span className="muted"> in {e.parent_name}</span> : null}
+            </p>
+            <p className="meta">
+              <HashLink href={`#eo=${e.eo_id}`} onOpen={() => onOpenEo(e.eo_id)}>
+                {shortLabel(e)}
+              </HashLink>
+              {e.year ? ` · ${e.year}` : ""}
+              {e.mayor ? ` · ${e.mayor}` : ""}
+              {" · “"}
+              {e.verb}
+              {"”"}
+            </p>
+            <p className="snippet">{squash(e.text)}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The bodies the orders placed INSIDE this one.
+ *
+ * Its own panel, never folded into the lineage. 2022-EO-003 § 3 moves the Office
+ * of Cyber Command, the Office of Data Analytics and the Office of Information
+ * Privacy into the Office of Technology and Innovation; read from OTI's page that
+ * is the most useful thing the order says, and the lineage query cannot show it,
+ * because OTI is on neither side of those three events.
+ *
+ * Kept apart because containment is not succession. An office is not renamed into
+ * the thing that contains it, and a chain mixing the two would read as though it
+ * were — which is also why these rows are left out of `event_count` and out of the
+ * index's lineage filter.
+ *
+ * Rendered only when there is something in it: an empty "Contains" heading on
+ * nearly every agency page would say the app had lost something rather than that
+ * no order ever put a body inside this one.
+ */
+function Contains({ events, onOpen, onOpenEo }) {
+  return (
+    <div className="panel">
+      <p className="chart-title">Contains</p>
+      <p className="chart-note">
+        Bodies an order established or continued INSIDE this one. Containment, not
+        succession — none of these is a rename, and none of them appears in the chain
+        above. Matched by pattern and unreviewed, like the lineage, so the sentence is
+        printed under each one.
+      </p>
+
+      {events.map((e) => (
+        <div className="edge" key={eventKey(e)}>
+          <span className="verb">{EVENT_LABEL[e.kind] ?? e.kind}</span>
+          <div className="lineage-body">
+            <p className="lineage-what">
+              {e.to_id ? (
+                <HashLink href={`#entity=${e.to_id}`} onOpen={() => onOpen(e.to_id)}>
+                  {e.to_display_name ?? e.to_name}
+                </HashLink>
+              ) : (
+                <span className="unresolved">{e.to_name}</span>
+              )}
+            </p>
+            <p className="meta">
+              <HashLink href={`#eo=${e.eo_id}`} onOpen={() => onOpenEo(e.eo_id)}>
+                {shortLabel(e)}
+              </HashLink>
+              {e.year ? ` · ${e.year}` : ""}
+              {e.mayor ? ` · ${e.mayor}` : ""}
+              {" · “"}
+              {e.verb}
+              {"”"}
+            </p>
+            <p className="snippet">{squash(e.text)}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The other body an event names, linked when it has a page and plain when not.
+ *
+ * 13 role names in the corpus land on no page — a bare acronym, a possessive the
+ * id scheme spells differently. A dead link would be worse than the name.
+ */
+function Other({ event, entityId, onOpen }) {
+  const other = counterpart(event, entityId);
+  if (!other) return null;
+  if (!other.entity_id) return <span className="unresolved">{other.name}</span>;
+  return (
+    <>
+      <HashLink href={`#entity=${other.entity_id}`} onOpen={() => onOpen(other.entity_id)}>
+        {other.name}
+      </HashLink>{" "}
+      <span className={kindClass(other.kind)} title={KIND_TITLE[other.kind]}>
+        {KIND_LABEL[other.kind]}
+      </span>
+    </>
+  );
+}
+
+/**
+ * The chain: what came before this body, what came after, and when it began and
+ * ended.
+ *
+ * Flex boxes and not an SVG. Agency names run to sixty characters and wrap where
+ * they must; a fixed geometry would either clip them or force a scale nothing
+ * else on the page uses. EgoGraph is drawn because its POSITIONS carry meaning.
+ * Here only the order does.
+ *
+ * Most agencies have no link at all — 44 events in the whole corpus name a body
+ * on each side — so the usual shape of this strip is one box with a date under
+ * it. That is not a degenerate case to hide. "Established in 1972 by this order,
+ * and nothing since" is the answer for most of them.
+ */
+function Chain({ events, row, entityId, onOpen }) {
+  const { before, after, self, start, end } = chainOf(events, entityId);
+
+  return (
+    <div className="chain">
+      {before.length > 0 ? (
+        <div className="chain-col">
+          {before.map((e) => (
+            <Step key={eventKey(e)} event={e} entityId={entityId} onOpen={onOpen} into />
+          ))}
+        </div>
+      ) : null}
+
+      <div className="chain-col">
+        <div className="chain-node current">
+          <span className="chain-name">{row.display_name}</span>
+          <span className={kindClass(row.kind)} title={KIND_TITLE[row.kind]}>
+            {KIND_LABEL[row.kind]}
+          </span>
+          {/* Both sides of these events are this same agency: the registry gives
+              DoITT and OTI one slug, so its 2022 rename is `oti -> oti`. Drawn
+              as an arrow it would leave the box and come back, which reads as a
+              bug. It is a rename OF the body, so it goes ON the body. */}
+          {self.map((e) => (
+            <span className="chain-self" key={eventKey(e)}>
+              {EVENT_LABEL[e.kind] ?? e.kind} {e.year ? `in ${e.year}` : ""}: {e.from_name} →{" "}
+              {e.to_name}
+            </span>
+          ))}
+        </div>
+        {start.length > 0 || end.length > 0 ? (
+          <p className="chain-caps">
+            {/* By date and not by kind: a body established in 2002, established
+                again in 2022 and abolished in between reads as a history only
+                in the order it happened. */}
+            {[...start, ...end]
+              .sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
+              .map((e) => (
+                <span className="chain-cap" key={eventKey(e)}>
+                  {EVENT_LABEL[e.kind] ?? e.kind}
+                  {e.year ? ` ${e.year}` : ""}
+                </span>
+              ))}
+          </p>
+        ) : null}
+      </div>
+
+      {after.length > 0 ? (
+        <div className="chain-col">
+          {after.map((e) => (
+            <Step key={eventKey(e)} event={e} entityId={entityId} onOpen={onOpen} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** One box and its arrow. `into` puts the arrow after the box, pointing here. */
+function Step({ event, entityId, onOpen, into = false }) {
+  const other = counterpart(event, entityId);
+  const label = (
+    <span className="chain-verb">
+      {EVENT_LABEL[event.kind] ?? event.kind}
+      {event.year ? ` ${event.year}` : ""}
+    </span>
+  );
+  const arrow = (
+    <span className="chain-arrow">
+      {label}
+      <span aria-hidden="true">→</span>
+    </span>
+  );
+  // The badge is on every box for the same reason it is on every list row and
+  // every graph node: a reader must never have to work out whether a name was
+  // matched against a register or only looks like an agency name.
+  const node = other ? (
+    <span className="chain-node">
+      {other.entity_id ? (
+        <HashLink
+          className="chain-name"
+          href={`#entity=${other.entity_id}`}
+          onOpen={() => onOpen(other.entity_id)}
+        >
+          {other.name}
+        </HashLink>
+      ) : (
+        <span className="chain-name unresolved">{other.name}</span>
+      )}
+      {other.kind ? (
+        <span className={kindClass(other.kind)} title={KIND_TITLE[other.kind]}>
+          {KIND_LABEL[other.kind]}
+        </span>
+      ) : null}
+    </span>
+  ) : null;
+
+  return (
+    <div className="chain-step">
+      {into ? node : arrow}
+      {into ? arrow : node}
+    </div>
+  );
+}
+
+/** Stable across a rebuild: upstream numbers its events within each order. */
+const eventKey = (e) => `${e.eo_id}#${e.event_seq}`;
+
+/**
+ * The sentence, on one line.
+ *
+ * Pulling text out of a PDF puts a newline in the middle of a name constantly,
+ * so the stored sentence is right as a record and unreadable as a quotation.
+ */
+const squash = (text) =>
+  String(text ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");

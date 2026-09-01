@@ -352,7 +352,7 @@ export function buildEntityQuery(entityId) {
   return { sql: `SELECT * FROM entities WHERE entity_id = ?`, params: [entityId] };
 }
 
-function entityIndexSource({ q, kinds, minOrders }) {
+function entityIndexSource({ q, kinds, minOrders, hasLineage }) {
   const where = ["e.display_name IS NOT NULL"];
   const params = [];
 
@@ -374,16 +374,27 @@ function entityIndexSource({ q, kinds, minOrders }) {
     where.push("e.eo_count >= ?");
     params.push(minOrders);
   }
+  // A predicate and not a join. `event_count` is folded onto the entity row by
+  // the build precisely so that asking "does this agency have any lineage" costs
+  // nothing -- the index and its count both run this on every keystroke.
+  if (hasLineage) where.push("e.event_count > 0");
   return { where, params };
 }
 
 /** The agency index, most-cited first. */
-export function buildEntityIndexQuery({ q, kinds, minOrders, limit = 50, offset = 0 }) {
-  const { where, params } = entityIndexSource({ q, kinds, minOrders });
+export function buildEntityIndexQuery({
+  q,
+  kinds,
+  minOrders,
+  hasLineage,
+  limit = 50,
+  offset = 0,
+}) {
+  const { where, params } = entityIndexSource({ q, kinds, minOrders, hasLineage });
   return {
     sql: `
       SELECT e.entity_id, e.display_name, e.kind, e.short_name, e.classification,
-             e.eo_count, e.mention_count, e.first_year, e.last_year
+             e.eo_count, e.mention_count, e.first_year, e.last_year, e.event_count
       FROM entities e${whereClause(where)}
       ORDER BY e.eo_count DESC, e.display_name
       LIMIT ${Number(limit)} OFFSET ${Number(offset)}`,
@@ -391,9 +402,79 @@ export function buildEntityIndexQuery({ q, kinds, minOrders, limit = 50, offset 
   };
 }
 
-export function buildEntityIndexCountQuery({ q, kinds, minOrders }) {
-  const { where, params } = entityIndexSource({ q, kinds, minOrders });
+export function buildEntityIndexCountQuery({ q, kinds, minOrders, hasLineage }) {
+  const { where, params } = entityIndexSource({ q, kinds, minOrders, hasLineage });
   return { sql: `SELECT count(*) AS n FROM entities e${whereClause(where)}`, params };
+}
+
+/**
+ * Every reorganization event that names one agency, oldest first.
+ *
+ * Either SIDE counts: the agency a body was renamed from is as much a part of
+ * its history as the one it was renamed to. The `parent` role is NOT a side, so
+ * an agency that dozens of bodies were established INSIDE does not collect dozens
+ * of events it never had. Containment is its own question and
+ * `buildEntityContainsQuery` answers it.
+ *
+ * The counterpart's display name and kind are joined here rather than looked up
+ * by the view. Both sides of an event resolve against the same table the page
+ * itself came from, and a second round trip per row to name a box would be the
+ * one thing standing between the panel and its first paint.
+ *
+ * `d.year` is NULL for no event, because every event carries an eo_id that the
+ * build has already checked against the corpus -- but the join stays a LEFT one
+ * so a future mismatch loses a date rather than a whole row.
+ */
+export function buildEntityEventsQuery(entityId) {
+  return {
+    sql: `
+      SELECT v.eo_id, v.event_seq, v.kind, v.verb, v.text,
+             v.from_id, v.from_name, v.to_id, v.to_name, v.parent_name,
+             f.display_name AS from_display_name, f.kind AS from_entity_kind,
+             t.display_name AS to_display_name,   t.kind AS to_entity_kind,
+             d.year, d.date_signed, d.mayor, d.title
+      FROM agency_events v
+      LEFT JOIN entities f ON f.entity_id = v.from_id
+      LEFT JOIN entities t ON t.entity_id = v.to_id
+      LEFT JOIN eo_meta  d ON d.eo_id     = v.eo_id
+      WHERE v.from_id = ? OR v.to_id = ?
+      ORDER BY d.year, d.date_signed NULLS LAST, v.eo_id, v.event_seq`,
+    params: [entityId, entityId],
+  };
+}
+
+/**
+ * The bodies an order placed INSIDE one agency, oldest first.
+ *
+ * "The Office of Cyber Command ..., the Office of Data Analytics ... and the
+ * Office of Information Privacy ... shall be continued and established within the
+ * Office of Technology and Innovation" (2022-EO-003 § 3) is three offices moving
+ * into OTI. Read from OTI's own page that is the most useful thing the order says,
+ * and the lineage query cannot show it: OTI is on neither side of those three
+ * events.
+ *
+ * So this is a SEPARATE query, and containment stays out of the lineage panel and
+ * out of `event_count`. An office is not renamed into the thing that contains it,
+ * and a chain that mixed the two would read as though it were.
+ *
+ * Only rows whose `parent_id` resolved to a page are returned. A parent named but
+ * unmatched is still printed on the contained body's own row, where the name alone
+ * is enough.
+ */
+export function buildEntityContainsQuery(entityId) {
+  return {
+    sql: `
+      SELECT v.eo_id, v.event_seq, v.kind, v.verb, v.text,
+             v.to_id, v.to_name,
+             t.display_name AS to_display_name, t.kind AS to_entity_kind,
+             d.year, d.date_signed, d.mayor, d.title
+      FROM agency_events v
+      LEFT JOIN entities t ON t.entity_id = v.to_id
+      LEFT JOIN eo_meta  d ON d.eo_id     = v.eo_id
+      WHERE v.parent_id = ?
+      ORDER BY d.year, d.date_signed NULLS LAST, v.eo_id, v.event_seq`,
+    params: [entityId],
+  };
 }
 
 /**
@@ -454,7 +535,7 @@ export function agencyCap(maxAgencies) {
  * `date_signed` is NULL for a handful of orders whose date could not be read off
  * the scan; those sort last within their year rather than vanishing.
  */
-export function buildEntityLineageQuery(entityId, alsoIds = [], maxAgencies = null) {
+export function buildEntityOrdersQuery(entityId, alsoIds = [], maxAgencies = null) {
   const sel = intersectionSource(entityId, alsoIds, maxAgencies);
   return {
     sql: `

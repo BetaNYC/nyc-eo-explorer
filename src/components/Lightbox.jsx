@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import HashLink from "./HashLink.jsx";
+
 import { longLabel } from "../data/labels.js";
 import { cropUrl, onCropError, tagLabel } from "../data/pictures.js";
 
@@ -67,15 +69,9 @@ export default function Lightbox({ items, index, onIndex, onClose, onOpen }) {
           />
           <figcaption className="lbcap">
             <span className={`badge pic-${item.tag ?? "none"}`}>{tagLabel(item.tag)}</span>
-            <a
-              href={`#eo=${item.eo_id}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(item.eo_id);
-              }}
-            >
+            <HashLink href={`#eo=${item.eo_id}`} onOpen={() => onOpen(item.eo_id)}>
               {longLabel(item)}
-            </a>
+            </HashLink>
             <span className="muted">
               {item.mayor} · {fmtDate(item.date_signed) ?? `${item.year} (date unknown)`} ·
               volume page {item.page}

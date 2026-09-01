@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import HashLink from "../components/HashLink.jsx";
 import Snippet from "../components/Snippet.jsx";
 import { shortLabel } from "../data/labels.js";
 import { ensureText, query } from "../duckdb/store.js";
@@ -144,16 +145,9 @@ export default function Browse({ state, filters, hasText, onOpen }) {
       {rows.map((r) => (
         <article className="result" key={r.eo_id}>
           <div className="rtop">
-            <a
-              className="id"
-              href={`#eo=${r.eo_id}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(r.eo_id);
-              }}
-            >
+            <HashLink className="id" href={`#eo=${r.eo_id}`} onOpen={() => onOpen(r.eo_id)}>
               {shortLabel(r)}
-            </a>
+            </HashLink>
             <span className={`title${r.title ? "" : " untitled"}`}>
               {r.title ?? "No title recorded"}
             </span>

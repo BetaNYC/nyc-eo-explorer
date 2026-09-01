@@ -25,6 +25,9 @@ export const DEFAULT_STATE = {
   entity_q: "",
   entity_kind: [],
   entity_min: null,
+  // Show only the agencies an order creates, renames, transfers, merges or
+  // abolishes. A real boolean, not a string -- see BOOL_KEYS below.
+  entity_lineage: null,
   mayor: [],
   source: [],
   text_quality: [],
@@ -36,6 +39,10 @@ export const DEFAULT_STATE = {
 
 const LIST_KEYS = ["mayor", "source", "text_quality", "picture_tag", "entity_kind", "also"];
 const INT_KEYS = ["yearMin", "yearMax", "entity_min", "max_agencies"];
+// Parsed, never passed through. The fall-through branch below assigns the raw
+// string, and a hand-edited `entity_lineage=false` would then be the STRING
+// "false" -- which is truthy, so the filter would switch itself on.
+const BOOL_KEYS = ["isEmergency", "entity_lineage"];
 
 export function readHash(hash = window.location.hash) {
   // Fresh arrays, not the ones on DEFAULT_STATE: a caller that mutated a
@@ -62,7 +69,7 @@ export function readHash(hash = window.location.hash) {
     } else if (INT_KEYS.includes(key)) {
       const n = Number.parseInt(value, 10);
       state[key] = Number.isFinite(n) ? n : null;
-    } else if (key === "isEmergency") {
+    } else if (BOOL_KEYS.includes(key)) {
       state[key] = value === "true" ? true : value === "false" ? false : null;
     } else {
       state[key] = value;
@@ -129,4 +136,16 @@ export function pushHash(state, mode = "replace") {
   if (next !== window.location.hash || window.history.state?.eoNav !== depth) {
     window.history.replaceState({ eoNav: depth }, "", url);
   }
+}
+
+/**
+ * Does the app take over this click on a hash link, or does the browser?
+ *
+ * The app takes a plain left click: it has a whole state to write, and the href
+ * carries one key of it. Everything else -- command, control, shift, alt, and
+ * any button but the first -- means "open this somewhere else", which is the
+ * browser's to do, and a fresh tab starts from the href alone.
+ */
+export function appHandlesClick(e) {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 }

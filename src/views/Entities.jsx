@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import HashLink from "../components/HashLink.jsx";
+
 import {
   KIND_LABEL,
   KIND_PROPOSED,
@@ -41,11 +43,12 @@ export default function Entities({ state, onOpen, onChange }) {
   const q = state.entity_q ?? "";
   const kinds = state.entity_kind ?? [];
   const minOrders = state.entity_min ?? DEFAULT_MIN_ORDERS;
+  const hasLineage = state.entity_lineage === true;
   // Serialized once, so the effects below compare a string rather than a fresh
   // array identity on every render.
   const kindKey = kinds.join(",");
 
-  useEffect(() => setShown(PAGE), [q, kindKey, minOrders]);
+  useEffect(() => setShown(PAGE), [q, kindKey, minOrders, hasLineage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +56,12 @@ export default function Entities({ state, onOpen, onChange }) {
       try {
         await ensureEntities();
         if (cancelled) return;
-        const args = { q, kinds: kindKey ? kindKey.split(",") : [], minOrders };
+        const args = {
+          q,
+          kinds: kindKey ? kindKey.split(",") : [],
+          minOrders,
+          hasLineage,
+        };
         const [list, counted] = await Promise.all([
           run(buildEntityIndexQuery({ ...args, limit: shown })),
           run(buildEntityIndexCountQuery(args)),
@@ -68,7 +76,7 @@ export default function Entities({ state, onOpen, onChange }) {
     return () => {
       cancelled = true;
     };
-  }, [q, kindKey, minOrders, shown]);
+  }, [q, kindKey, minOrders, hasLineage, shown]);
 
   const toggleKind = (kind) =>
     onChange({
@@ -105,6 +113,11 @@ export default function Entities({ state, onOpen, onChange }) {
         like an agency name — which is the only way a body that no longer exists can appear
         here, because the registry lists agencies that are active today.
       </p>
+      <p className="hint">
+        <strong>Lineage</strong> is a sentence in an order that establishes, renames, transfers,
+        merges or abolishes a body. Few agencies have one: most orders reorganize nothing, and
+        the Charter and Local Law do this work too and are not in this corpus.
+      </p>
 
       <div className="searchbar">
         <label className="minorders">
@@ -121,6 +134,20 @@ export default function Entities({ state, onOpen, onChange }) {
           />
           orders
         </label>
+        {/* Off writes null rather than false, so the key leaves the URL when
+            the filter is off and a shared link carries only what was chosen. */}
+        <div className="modes small">
+          <button
+            aria-pressed={hasLineage}
+            title={
+              "Only the agencies an order establishes, renames, transfers, merges " +
+              "or abolishes."
+            }
+            onClick={() => onChange({ entity_lineage: hasLineage ? null : true })}
+          >
+            Has lineage
+          </button>
+        </div>
         {minOrders !== DEFAULT_MIN_ORDERS ? (
           <button className="clear" onClick={() => onChange({ entity_min: null })}>
             Reset
@@ -155,9 +182,9 @@ export default function Entities({ state, onOpen, onChange }) {
           {rows.map((r) => (
             <article className="result" key={r.entity_id}>
               <h3>
-                <a href={`#entity=${r.entity_id}`} onClick={() => onOpen(r.entity_id)}>
+                <HashLink href={`#entity=${r.entity_id}`} onOpen={() => onOpen(r.entity_id)}>
                   {r.display_name}
-                </a>
+                </HashLink>
                 {r.short_name ? <span className="badge">{r.short_name}</span> : null}
                 <span className={kindClass(r.kind)} title={KIND_TITLE[r.kind]}>
                   {KIND_LABEL[r.kind]}
@@ -167,6 +194,13 @@ export default function Entities({ state, onOpen, onChange }) {
                 {r.eo_count.toLocaleString()} orders · {r.mention_count.toLocaleString()}{" "}
                 mentions · {r.first_year}–{r.last_year}
                 {r.classification ? ` · ${classificationLabel(r.classification)}` : ""}
+                {/* Named on the row, so a reader who turns the filter on can see
+                    which fact put each agency in the list. */}
+                {r.event_count > 0
+                  ? ` · ${r.event_count.toLocaleString()} lineage ${
+                      r.event_count === 1 ? "event" : "events"
+                    }`
+                  : ""}
               </p>
             </article>
           ))}

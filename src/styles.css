@@ -1084,6 +1084,131 @@ img.cropmissing {
   color: #8a6608;
 }
 
+/* ---------- agency lineage ---------- */
+
+/* The chain of bodies, one row: what came before, this agency, what came after.
+   Flex and not SVG -- an agency name runs to sixty characters and has to be
+   allowed to wrap. It wraps to a column on a narrow screen rather than
+   scrolling, because reading order still carries the meaning there. */
+.chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 18px;
+}
+
+.chain-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chain-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chain-node {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  max-width: 26ch;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+/* The agency whose page this is. Solid, so a reader never has to work out which
+   box they are standing in. */
+.chain-node.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chain-name {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.chain-name.unresolved {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* A rename where both names resolve to one agency -- DoITT and OTI share a
+   registry slug. Written on the box, never drawn as an arrow that leaves it and
+   comes back. */
+.chain-self {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chain-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.chain-verb {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* When it began and when it ended. Under the box rather than beside it: these
+   are dates ON this body, not links to another one. */
+.chain-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+.chain-cap {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* An event row is an `.edge` whose second half is three stacked lines, so the
+   flex baseline has to give the body the rest of the width. */
+.lineage-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.lineage-what {
+  margin: 0;
+}
+
+.lineage-body .meta {
+  margin: 2px 0 0;
+}
+
+/* The evidence. Quoted, indented and quiet, so it reads as what the order says
+   rather than as what this app claims. */
+.lineage-body .snippet {
+  margin: 4px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* A different mark from the search one. A search hit is what the reader asked
    for; an agency name is something the scan found, and the two must not read as
    the same claim when both are on screen. */

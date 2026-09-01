@@ -135,3 +135,87 @@ const norm = (s) =>
     .replace(/['\u2019]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+/**
+ * The seven reorganization kinds, read as English.
+ *
+ * Upstream names them after the verb phrase in the sentence -- `transfers_to`,
+ * `merges_into`. On a page ABOUT the agency the sentence acts on, the passive
+ * reads right: this body was established, was renamed, was transferred to
+ * another. The map lives here because one file owns every agency label.
+ */
+export const EVENT_LABEL = {
+  establishes: "established",
+  continues: "continued",
+  renames: "renamed",
+  transfers_to: "transferred to",
+  merges_into: "merged into",
+  succeeds: "succeeded by",
+  abolishes: "abolished",
+};
+
+/** The kinds that START a body, and so date the left end of its lineage. */
+export const EVENT_KINDS_START = new Set(["establishes", "continues"]);
+
+/** The one kind that ENDS a body. */
+export const EVENT_KINDS_END = new Set(["abolishes"]);
+
+/**
+ * The kinds that connect TWO bodies, and so are the only ones that draw a chain.
+ *
+ * Only 44 events in the corpus fill both a `from` and a `to`, and 9 of those put
+ * one agency on both sides. So the chain is a short strip, never a family tree,
+ * and most agencies have none at all.
+ */
+export const EVENT_KINDS_LINK = new Set(["renames", "transfers_to", "merges_into", "succeeds"]);
+
+/**
+ * Sort one agency's events into the shapes the chain strip draws.
+ *
+ * `before` and `after` are the links to another body. `self` is the case that
+ * would look like a bug if it were drawn as an arrow: the registry gives the
+ * Department of Information Technology and Telecommunications and the Office of
+ * Technology and Innovation the same slug, so the 2022 rename has one id on both
+ * sides. It is a rename OF this body and belongs on the box, not beside it.
+ *
+ * `start` and `end` are the caps -- the order that created the body and the one
+ * that shut it down. Several of each can exist: a body is re-established, or
+ * continued by a later mayor, and the strip shows the run rather than picking one.
+ */
+export function chainOf(events, entityId) {
+  const out = { before: [], after: [], self: [], start: [], end: [] };
+  for (const e of events ?? []) {
+    const from = e.from_id;
+    const to = e.to_id;
+    if (EVENT_KINDS_LINK.has(e.kind) && from && to && from === to && from === entityId) {
+      out.self.push(e);
+    } else if (EVENT_KINDS_LINK.has(e.kind) && to === entityId && from !== entityId) {
+      out.before.push(e);
+    } else if (EVENT_KINDS_LINK.has(e.kind) && from === entityId && to !== entityId) {
+      out.after.push(e);
+    } else if (EVENT_KINDS_START.has(e.kind) && to === entityId) {
+      out.start.push(e);
+    } else if (EVENT_KINDS_END.has(e.kind)) {
+      out.end.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * The other body an event names, from the point of view of one agency.
+ *
+ * Returns what the row should print: an id to link to when the name landed on a
+ * page, and a name to print plainly when it did not. 13 role names in the corpus
+ * have no page, and a dead link would be worse than plain text.
+ */
+export function counterpart(event, entityId) {
+  const mine = event.from_id === entityId && event.from_id !== null;
+  const id = mine ? event.to_id : event.from_id;
+  const name = mine
+    ? (event.to_display_name ?? event.to_name)
+    : (event.from_display_name ?? event.from_name);
+  const kind = mine ? event.to_entity_kind : event.from_entity_kind;
+  if (!name) return null;
+  return { entity_id: id ?? null, name, kind: kind ?? null };
+}

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_STATE, canGoBack, pushHash, readHash, writeHash } from "../src/state/hash.js";
+import {
+  DEFAULT_STATE,
+  appHandlesClick,
+  canGoBack,
+  pushHash,
+  readHash,
+  writeHash,
+} from "../src/state/hash.js";
 
 const STATES = [
   { ...DEFAULT_STATE },
@@ -193,5 +200,58 @@ describe("back over the history the app writes", () => {
     globalThis.window = fakeWindow("#eo=1975-EO-040");
     pushHash(readHash("#eo=1975-EO-040"));
     expect(canGoBack()).toBe(false);
+  });
+});
+
+describe("clicks on an in-app hash link", () => {
+  const click = (over = {}) => ({
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    ...over,
+  });
+
+  it("takes a plain left click", () => {
+    // The href names one key. The app writes the whole state, so it has to be
+    // the app that navigates -- letting the browser follow the href as well
+    // drops every other key and adds a history entry the app did not make.
+    expect(appHandlesClick(click())).toBe(true);
+  });
+
+  it("leaves a new tab, a new window and a saved link to the browser", () => {
+    expect(appHandlesClick(click({ metaKey: true }))).toBe(false);
+    expect(appHandlesClick(click({ ctrlKey: true }))).toBe(false);
+    expect(appHandlesClick(click({ shiftKey: true }))).toBe(false);
+    expect(appHandlesClick(click({ altKey: true }))).toBe(false);
+    expect(appHandlesClick(click({ button: 1 }))).toBe(false);
+  });
+});
+
+describe("entity_lineage", () => {
+  it("round-trips as a real boolean, not as a string", () => {
+    const state = readHash("#view=entities&entity_lineage=true");
+    expect(state.entity_lineage).toBe(true);
+    expect(writeHash(state)).toBe("#view=entities&entity_lineage=true");
+  });
+
+  it("reads =false as false", () => {
+    // The fall-through branch assigns the raw string, and the STRING "false" is
+    // truthy -- so a hand-edited link would switch the filter on. Hashes get
+    // hand-edited and shared, which is the whole reason this key is parsed.
+    expect(readHash("#entity_lineage=false").entity_lineage).toBe(false);
+  });
+
+  it("leaves the URL when the filter is off", () => {
+    expect(writeHash({ ...DEFAULT_STATE, view: "entities" })).toBe("#view=entities");
+  });
+
+  it("survives beside the other agency filters", () => {
+    const state = readHash("#view=entities&entity_q=board&entity_min=1&entity_lineage=true");
+    expect(state.entity_q).toBe("board");
+    expect(state.entity_min).toBe(1);
+    expect(state.entity_lineage).toBe(true);
+    expect(readHash(writeHash(state))).toEqual(state);
   });
 });

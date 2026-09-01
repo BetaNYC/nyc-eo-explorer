@@ -33,9 +33,11 @@ import {
   buildCooccurrenceQuery,
   buildCountQuery,
   buildEntitiesForEoQuery,
+  buildEntityContainsQuery,
+  buildEntityEventsQuery,
   buildEntityIndexCountQuery,
   buildEntityIndexQuery,
-  buildEntityLineageQuery,
+  buildEntityOrdersQuery,
   buildEntityNamesQuery,
   buildEntityQuery,
   buildEntityYearsQuery,
@@ -102,6 +104,9 @@ d("generated SQL against real DuckDB + real Parquet", () => {
     await conn.run(`
       CREATE TABLE eo_agencies AS
       SELECT eo_id, count(*) AS agencies FROM eo_entity GROUP BY 1`);
+    await conn.run(
+      `CREATE TABLE agency_events AS SELECT * FROM '${p("agency_events.parquet")}'`
+    );
 
     // The browser builds this table by handing DuckDB newline-delimited JSON
     // (src/duckdb/store.js). The rows come from the SAME flattener, so what is
@@ -640,7 +645,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
     });
 
     it("lists an agency's orders oldest first, one row per order", async () => {
-      const q = buildEntityLineageQuery(busiest.entity_id);
+      const q = buildEntityOrdersQuery(busiest.entity_id);
       const rows = await run(q.sql, q.params);
       expect(rows).toHaveLength(Number(busiest.eo_count));
       const years = rows.map((r) => Number(r.year));
@@ -649,7 +654,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
     });
 
     it("agrees with the entity row about when the agency is first and last named", async () => {
-      const q = buildEntityLineageQuery(busiest.entity_id);
+      const q = buildEntityOrdersQuery(busiest.entity_id);
       const rows = await run(q.sql, q.params);
       expect(Number(rows[0].year)).toBe(Number(busiest.first_year));
       expect(Number(rows[rows.length - 1].year)).toBe(Number(busiest.last_year));
@@ -778,9 +783,9 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       const ring = await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 2 })));
       const [a, b] = ring.map((r) => r.entity_id);
 
-      const alone = await run(...two(buildEntityLineageQuery(busiest.entity_id)));
-      const withA = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
-      const withBoth = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, b])));
+      const alone = await run(...two(buildEntityOrdersQuery(busiest.entity_id)));
+      const withA = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a])));
+      const withBoth = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a, b])));
 
       // Intersection, so every step can only take orders away.
       expect(withA.length).toBeLessThanOrEqual(alone.length);
@@ -804,7 +809,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       const [a] = (
         await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 1 })))
       ).map((r) => r.entity_id);
-      const orders = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
+      const orders = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a])));
       const years = await run(...two(buildEntityYearsQuery(busiest.entity_id, [a])));
       expect(years.reduce((n, r) => n + Number(r.n), 0)).toBe(orders.length);
     });
@@ -815,10 +820,10 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       const [a] = (
         await run(...two(buildCooccurrenceQuery(busiest.entity_id, { limit: 1 })))
       ).map((r) => r.entity_id);
-      const once = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a])));
-      const twice = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, a])));
+      const once = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a])));
+      const twice = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a, a])));
       const itself = await run(
-        ...two(buildEntityLineageQuery(busiest.entity_id, [busiest.entity_id]))
+        ...two(buildEntityOrdersQuery(busiest.entity_id, [busiest.entity_id]))
       );
       expect(twice.length).toBe(once.length);
       expect(itself.length).toBe(Number(busiest.eo_count));
@@ -826,7 +831,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
 
     it("returns nothing at all for a combination no order satisfies", async () => {
       const rows = await run(
-        ...two(buildEntityLineageQuery(busiest.entity_id, ["x-no-such-agency-anywhere"]))
+        ...two(buildEntityOrdersQuery(busiest.entity_id, ["x-no-such-agency-anywhere"]))
       );
       expect(rows).toEqual([]);
     });
@@ -844,12 +849,12 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       // Every count it reports is a real, reachable order count...
       for (const [id, n] of reachable) {
         expect(n).toBeGreaterThan(0);
-        const rows = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, id])));
+        const rows = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a, id])));
         expect(rows.length).toBe(n);
       }
       // ...and everything it leaves out really does dead-end.
       for (const id of ring.filter((x) => !reachable.has(x))) {
-        const rows = await run(...two(buildEntityLineageQuery(busiest.entity_id, [a, id])));
+        const rows = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [a, id])));
         expect(rows.length, `${id} was greyed but returns orders`).toBe(0);
       }
     });
@@ -859,8 +864,8 @@ d("generated SQL against real DuckDB + real Parquet", () => {
     });
 
     it("caps the orders by how many agencies they name", async () => {
-      const all = await run(...two(buildEntityLineageQuery(busiest.entity_id)));
-      const small = await run(...two(buildEntityLineageQuery(busiest.entity_id, [], 3)));
+      const all = await run(...two(buildEntityOrdersQuery(busiest.entity_id)));
+      const small = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [], 3)));
       expect(small.length).toBeLessThan(all.length);
 
       // Every order that survives really does name at most 3 agencies.
@@ -918,7 +923,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
     });
 
     it("caps the year strip and the greying too, so nothing contradicts", async () => {
-      const orders = await run(...two(buildEntityLineageQuery(busiest.entity_id, [], 5)));
+      const orders = await run(...two(buildEntityOrdersQuery(busiest.entity_id, [], 5)));
       const years = await run(...two(buildEntityYearsQuery(busiest.entity_id, [], 5)));
       expect(years.reduce((n, r) => n + Number(r.n), 0)).toBe(orders.length);
 
@@ -931,7 +936,7 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       const q = buildRingEligibilityQuery(busiest.entity_id, [a], ring, 5);
       for (const r of await run(q.sql, q.params)) {
         const rows = await run(
-          ...two(buildEntityLineageQuery(busiest.entity_id, [a, r.entity_id], 5))
+          ...two(buildEntityOrdersQuery(busiest.entity_id, [a, r.entity_id], 5))
         );
         expect(rows.length, r.entity_id).toBe(Number(r.n));
       }
@@ -1025,6 +1030,179 @@ d("generated SQL against real DuckDB + real Parquet", () => {
       );
       return row.eo_id;
     }
+  });
+
+  describe("agency lineage", () => {
+    it("puts every event on a page, on both sides", async () => {
+      // A NULL id means the body has no page here and the row prints its name as
+      // plain text. A NON-null id that joins to nothing would be a dead link,
+      // and the id scheme is the only thing standing between the two.
+      const [{ n }] = await run(`
+        SELECT count(*) AS n FROM agency_events v
+        WHERE (v.from_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_id = v.from_id))
+           OR (v.to_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_id = v.to_id))`);
+      expect(Number(n)).toBe(0);
+    });
+
+    it("names every event's order in the corpus", async () => {
+      const [{ n }] = await run(`
+        SELECT count(*) AS n FROM agency_events v
+        WHERE NOT EXISTS (SELECT 1 FROM eo_meta m WHERE m.eo_id = v.eo_id)`);
+      expect(Number(n)).toBe(0);
+    });
+
+    it("only ever uses the seven kinds the extractor emits", async () => {
+      // A kind the interface has no label for would render as a raw slug.
+      const rows = await run(`SELECT DISTINCT kind FROM agency_events`);
+      const known = new Set([
+        "establishes",
+        "continues",
+        "renames",
+        "transfers_to",
+        "abolishes",
+        "merges_into",
+        "succeeds",
+      ]);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) expect(known.has(r.kind)).toBe(true);
+    });
+
+    it("fills at least one side of every event", async () => {
+      // An event naming neither a from nor a to could never reach any page, and
+      // would be a row nothing can ever read.
+      const [{ n }] = await run(
+        `SELECT count(*) AS n FROM agency_events WHERE from_name IS NULL AND to_name IS NULL`
+      );
+      expect(Number(n)).toBe(0);
+    });
+
+    it("keys an event uniquely by its order and its sequence", async () => {
+      const [{ n }] = await run(
+        `SELECT count(*) AS n FROM (SELECT eo_id, event_seq FROM agency_events
+                                   GROUP BY 1, 2 HAVING count(*) > 1)`
+      );
+      expect(Number(n)).toBe(0);
+    });
+
+    it("agrees with the event_count on the agency row, exactly", async () => {
+      // The index filters on that column instead of joining this table, so the
+      // two disagreeing would show a reader a list that does not match its own
+      // count.
+      const [{ n }] = await run(`
+        WITH counted AS (
+          SELECT entity_id, count(*) AS n FROM (
+            SELECT DISTINCT eo_id, event_seq, unnest([from_id, to_id]) AS entity_id
+            FROM agency_events
+          ) WHERE entity_id IS NOT NULL GROUP BY 1
+        )
+        SELECT count(*) AS n FROM entities e
+        FULL OUTER JOIN counted c USING (entity_id)
+        WHERE coalesce(e.event_count, -1) <> coalesce(c.n, 0)`);
+      expect(Number(n)).toBe(0);
+    });
+
+    it("carries the parent as an id, and still never counts it as lineage", async () => {
+      // Containment is resolved so an agency page can list what was put inside
+      // it, and it is kept out of event_count so the Office of the Mayor does
+      // not collect 59 events it never had. Both halves matter.
+      const cols = await run(`DESCRIBE agency_events`);
+      const names = cols.map((c) => c.column_name);
+      expect(names).toContain("parent_id");
+      expect(names).toContain("parent_name");
+
+      const [{ n }] = await run(`
+        SELECT count(*) AS n FROM agency_events
+        WHERE parent_id IS NOT NULL AND parent_id = coalesce(to_id, from_id)`);
+      expect(Number(n)).toBe(0);
+    });
+
+    it("lists the bodies an order placed inside one agency", async () => {
+      // 2022-EO-003 § 3 moves three offices into OTI. Read from OTI's page that
+      // is the most useful thing the order says, and the lineage query cannot
+      // show it: OTI is on neither side of those three events.
+      const rows = await run(...two(buildEntityContainsQuery("oti")));
+      expect(rows.map((r) => r.to_id)).toEqual([
+        "cyber-command",
+        "office-of-data-analytics",
+        "office-of-information-privacy",
+      ]);
+      for (const r of rows) expect(r.eo_id).toBe("2022-EO-003");
+    });
+
+    it("keeps containment out of the lineage panel", async () => {
+      // The three offices moved INTO OTI are not part of OTI's own history. An
+      // office is not renamed into the thing that contains it.
+      const events = await run(...two(buildEntityEventsQuery("oti")));
+      const inside = await run(...two(buildEntityContainsQuery("oti")));
+      const keyed = new Set(events.map((e) => `${e.eo_id}#${e.event_seq}`));
+      for (const r of inside) expect(keyed.has(`${r.eo_id}#${r.event_seq}`)).toBe(false);
+    });
+
+    it("never fills the same role twice in one event", async () => {
+      // Upstream's promise, and the reason it is a promise: eventRows flattens
+      // an event to a row with one from and one to, so a repeated role would be
+      // dropped silently. A list sentence must arrive as several events.
+      const [{ n }] = await run(`
+        SELECT count(*) AS n FROM (
+          SELECT eo_id, event_seq FROM agency_events GROUP BY 1, 2 HAVING count(*) > 1
+        )`);
+      expect(Number(n)).toBe(0);
+    });
+
+    it("returns an agency's events on either side, oldest first", async () => {
+      const [busiest] = await run(
+        `SELECT entity_id, event_count FROM entities
+         WHERE event_count > 0 ORDER BY event_count DESC, entity_id LIMIT 1`
+      );
+      const rows = await run(...two(buildEntityEventsQuery(busiest.entity_id)));
+      expect(rows.length).toBe(Number(busiest.event_count));
+      for (const r of rows) {
+        expect(r.from_id === busiest.entity_id || r.to_id === busiest.entity_id).toBe(true);
+      }
+      const years = rows.map((r) => Number(r.year));
+      expect([...years].sort((a, b) => a - b)).toEqual(years);
+    });
+
+    it("names the counterpart by its page title, not by the spelling used", async () => {
+      // The order writes "DOC" and the page is titled "Department of
+      // Correction". A box labelled with the raw spelling would not match the
+      // page it links to.
+      const rows = await run(`
+        SELECT v.to_id FROM agency_events v
+        JOIN entities e ON e.entity_id = v.to_id
+        WHERE v.to_id IS NOT NULL AND v.to_name <> e.display_name LIMIT 1`);
+      if (rows.length === 0) return; // every spelling happens to match today
+      const events = await run(...two(buildEntityEventsQuery(rows[0].to_id)));
+      const hit = events.find((e) => e.to_id === rows[0].to_id);
+      expect(hit.to_display_name).toBeTruthy();
+      expect(hit.to_display_name).not.toBe(hit.to_name);
+    });
+
+    it("narrows the agency index to the agencies that have lineage", async () => {
+      const args = { q: "", kinds: [], minOrders: 1 };
+      const all = await run(...two(buildEntityIndexCountQuery(args)));
+      const some = await run(...two(buildEntityIndexCountQuery({ ...args, hasLineage: true })));
+      expect(Number(some[0].n)).toBeGreaterThan(0);
+      expect(Number(some[0].n)).toBeLessThan(Number(all[0].n));
+
+      const rows = await run(
+        ...two(buildEntityIndexQuery({ ...args, hasLineage: true, limit: 200 }))
+      );
+      for (const r of rows) expect(Number(r.event_count)).toBeGreaterThan(0);
+    });
+
+    it("combines with the search box and the kind toggles", async () => {
+      const args = { q: "office", kinds: ["proposed"], minOrders: 1, hasLineage: true };
+      const rows = await run(...two(buildEntityIndexQuery({ ...args, limit: 200 })));
+      const [{ n }] = await run(...two(buildEntityIndexCountQuery(args)));
+      expect(rows.length).toBe(Math.min(200, Number(n)));
+      for (const r of rows) {
+        expect(r.kind).toBe("proposed");
+        expect(Number(r.event_count)).toBeGreaterThan(0);
+      }
+    });
   });
 
   /** The builders return one object; `run` takes (sql, params). */

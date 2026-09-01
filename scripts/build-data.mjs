@@ -10,8 +10,9 @@
  *                           place the volume page numbers exist.
  *   supersession.json     - {edges: [...], dangling_citations: [...], ...}
  *   mentions.json         - OPTIONAL. lineage/run_scan.py output: where agency
- *                           names appear in each order, plus the registry record
- *                           for every agency matched.
+ *                           names appear in each order, the registry record for
+ *                           every agency matched, and the reorganization
+ *                           sentences that create, rename or abolish them.
  *
  * Writes (into public/data/):
  *   eo_meta.parquet            21 locked frontmatter fields + char_count +
@@ -26,6 +27,9 @@
  *                              character offsets into full_text
  *   entities.parquet           one row per agency: what to call it, the registry
  *                              facts where they exist, and its corpus counts
+ *   agency_events.parquet      one row per reorganization sentence: the order
+ *                              that establishes, renames, transfers, merges or
+ *                              abolishes a body, and which bodies it names
  *   manifest.json              counts, sizes, generated_at, source digests
  *
  * And copies the crops themselves into public/pics/, from $EO_PICS_DIR --
@@ -43,13 +47,28 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DuckDBInstance } from "@duckdb/node-api";
 
-import { assertNoPrefixCollision, entityRows, mentionRows } from "./lib/entities.mjs";
+import {
+  assertNoPrefixCollision,
+  entityRows,
+  eventRows,
+  mentionRows,
+  unplacedRoles,
+} from "./lib/entities.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -155,6 +174,45 @@ const ENTITY_COLUMNS = {
   letterhead_count: "INTEGER",
   first_year: "INTEGER",
   last_year: "INTEGER",
+  event_count: "INTEGER", // reorganization events naming it, parent roles excluded
+};
+
+/**
+ * One row per reorganization event, in locked order.
+ *
+ * The sentence in an order that creates, renames, transfers, merges or abolishes
+ * a body. Upstream never fills a role twice in one event, so an event is one row
+ * and not a row per role -- which is what makes "every event naming this agency"
+ * a scan of two columns.
+ *
+ * Every column is DECLARED for the reason this file already gives for
+ * `admin_note`: `from_id`, `parent_name` and the `_found_by` pair are NULL
+ * through long runs of the file, and an all-NULL early row group is exactly what
+ * type inference gets wrong.
+ *
+ * `parent_id` is the body a new office was placed INSIDE, and it is deliberately
+ * kept out of the lineage columns. A body established "in the Office of the Mayor"
+ * says something about containment, not about succession, so `parent_id` answers
+ * its own question -- an agency page's "Contains" list -- while `event_count` and
+ * the chain still read `from_id` and `to_id` alone. Treating it as lineage would
+ * hand that office dozens of events it never had.
+ */
+const AGENCY_EVENT_COLUMNS = {
+  eo_id: "VARCHAR",
+  event_seq: "INTEGER",
+  kind: "VARCHAR", // establishes | continues | renames | transfers_to | abolishes | merges_into | succeeds
+  verb: "VARCHAR", // the verb as the order writes it
+  start: "INTEGER",
+  end: "INTEGER",
+  text: "VARCHAR", // the sentence itself -- the evidence, printed verbatim
+  from_id: "VARCHAR",
+  from_name: "VARCHAR",
+  from_found_by: "VARCHAR",
+  to_id: "VARCHAR",
+  to_name: "VARCHAR",
+  to_found_by: "VARCHAR",
+  parent_id: "VARCHAR", // containment, never lineage -- see above
+  parent_name: "VARCHAR",
 };
 
 const columnsSpec = (cols) =>
@@ -538,6 +596,8 @@ async function main(argv) {
   // same argument this file already makes for `admin_note`.
   let entityCount = 0;
   let entityMentionCount = 0;
+  let agencyEventCount = 0;
+  let unresolvedEventCount = 0;
   if (hasMentions) {
     const payload = JSON.parse(await readFile(mentionsJson, "utf8"));
     assertNoPrefixCollision(payload.agencies ?? []);
@@ -561,9 +621,28 @@ async function main(argv) {
       );
     }
 
-    const entities = entityRows(payload, kept, known);
+    // The events need the id space the mentions define, so they are built from
+    // the SET of ids those rows carry rather than from the entity rows -- which
+    // in turn need the events, to count them. Same information, no cycle.
+    const entityIds = new Set(kept.map((r) => r.entity_id));
+    const events = eventRows(payload, entityIds, known);
+    const entities = entityRows(payload, kept, known, events);
     entityMentionCount = kept.length;
     entityCount = entities.length;
+    agencyEventCount = events.length;
+    unresolvedEventCount = Number(payload.unresolved_event_count ?? 0);
+
+    const unplaced = unplacedRoles(events);
+    if (unplaced.length > 0) {
+      // Not a failure. The name is what the order says, and the row prints it as
+      // plain text with no link. This exists so the number is visible in the log
+      // rather than only in the interface.
+      const names = [...new Set(unplaced)];
+      log(
+        `              ${unplaced.length} event roles name a body with no page here ` +
+          `(${names.slice(0, 3).join(", ")}${names.length > 3 ? ", ..." : ""})`
+      );
+    }
 
     const mentionsTmp = join(OUT_DIR, ".entity_mentions.tmp.json");
     await writeFile(mentionsTmp, JSON.stringify(kept));
@@ -590,6 +669,22 @@ async function main(argv) {
     `);
     await unlink(entitiesTmp);
 
+    const eventsTmp = join(OUT_DIR, ".agency_events.tmp.json");
+    await writeFile(eventsTmp, JSON.stringify(events));
+    await run(`
+      COPY (
+        SELECT * FROM read_json(${sqlStr(eventsTmp)}, format='array',
+          maximum_object_size=134217728, columns=${columnsSpec(AGENCY_EVENT_COLUMNS)})
+        ORDER BY eo_id, event_seq
+      ) TO ${sqlStr(join(OUT_DIR, "agency_events.parquet"))} (FORMAT parquet, COMPRESSION zstd);
+    `);
+    await unlink(eventsTmp);
+
+    const withLineage = entities.filter((e) => e.event_count > 0).length;
+    log(
+      `lineage:      ${agencyEventCount} reorganization events touching ${withLineage} agencies`
+    );
+
     const confirmed = entities.filter((e) => e.kind === "registry").length;
     const letterhead = kept.filter((r) => r.in_letterhead).length;
     log(
@@ -608,13 +703,18 @@ async function main(argv) {
                    NULL::BOOLEAN AS in_letterhead) WHERE false)
       TO ${sqlStr(join(OUT_DIR, "entity_mentions.parquet"))} (FORMAT parquet, COMPRESSION zstd);
     `);
-    const nulls = Object.entries(ENTITY_COLUMNS)
-      .map(([name, type]) => `NULL::${type} AS "${name}"`)
-      .join(", ");
-    await run(`
-      COPY (SELECT * FROM (SELECT ${nulls}) WHERE false)
-      TO ${sqlStr(join(OUT_DIR, "entities.parquet"))} (FORMAT parquet, COMPRESSION zstd);
-    `);
+    for (const [name, cols] of [
+      ["entities.parquet", ENTITY_COLUMNS],
+      ["agency_events.parquet", AGENCY_EVENT_COLUMNS],
+    ]) {
+      const nulls = Object.entries(cols)
+        .map(([col, type]) => `NULL::${type} AS "${col}"`)
+        .join(", ");
+      await run(`
+        COPY (SELECT * FROM (SELECT ${nulls}) WHERE false)
+        TO ${sqlStr(join(OUT_DIR, name))} (FORMAT parquet, COMPRESSION zstd);
+      `);
+    }
     log(`entities:     absent (no mentions.json at ${mentionsJson})`);
   }
 
@@ -626,6 +726,7 @@ async function main(argv) {
     "supersession_edges.parquet",
     "entity_mentions.parquet",
     "entities.parquet",
+    "agency_events.parquet",
   ]) {
     const p = join(OUT_DIR, name);
     files[name] = { bytes: (await stat(p)).size, sha256: await sha256(p) };
@@ -649,6 +750,11 @@ async function main(argv) {
     includes_entities: hasMentions,
     entity_count: entityCount,
     entity_mention_count: entityMentionCount,
+    agency_event_count: agencyEventCount,
+    // Reorganization sentences upstream found and could NOT attach to an
+    // agency. Carried so the agency page can say how much it is not showing,
+    // rather than leaving a reader to assume the events are the whole record.
+    unresolved_event_count: unresolvedEventCount,
     page_provenance_count: pageProvCount,
     picture_count: pictures.count,
     picture_orders: Object.keys(pictures.by_eo).length,
@@ -668,7 +774,7 @@ async function main(argv) {
   log(`  ${join(OUT_DIR, "manifest.json")}`);
   log(
     `\n${total} orders (${manifest.year_min}-${manifest.year_max}), ${edgeCount} supersession edges, ` +
-      `${entityCount} agencies`
+      `${entityCount} agencies, ${agencyEventCount} reorganization events`
   );
   return 0;
 }

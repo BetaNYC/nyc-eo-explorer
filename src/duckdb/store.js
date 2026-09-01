@@ -134,6 +134,18 @@ async function fetchBytes(url) {
 // is what let a component query eo_text before anything had created it.
 let manifest = null;
 
+/**
+ * The manifest, once the store has one.
+ *
+ * Read by views that need a corpus-wide count to be honest about what they are
+ * NOT showing -- the agency page says how many reorganization sentences pinned
+ * down no agency. Threading the manifest through four levels of props to state
+ * one number is worse than asking the module that already holds it.
+ */
+export function getManifest() {
+  return manifest;
+}
+
 export function ensureEngine(m) {
   if (m) manifest = m;
   if (!enginePromise) {
@@ -241,7 +253,7 @@ export function ensurePictures() {
 }
 
 /**
- * Materialize the agency mentions.
+ * Materialize the agency mentions and the reorganization events.
  *
  * Deferred like the text is: the two files are ~330 KB and every query
  * serializes onto the single worker, so they load when a page that needs them is
@@ -269,7 +281,11 @@ export function ensureEntities() {
   if (!entitiesPromise) {
     entitiesPromise = (async () => {
       const { db } = await ensureEngine();
-      for (const name of ["entities.parquet", "entity_mentions.parquet"]) {
+      for (const name of [
+        "entities.parquet",
+        "entity_mentions.parquet",
+        "agency_events.parquet",
+      ]) {
         const version = manifest.files[name].sha256.slice(0, 12);
         await db.registerFileBuffer(name, await fetchBytes(dataUrl(name, version)));
       }
@@ -277,6 +293,11 @@ export function ensureEntities() {
       await conn.query(
         `CREATE TABLE entity_mentions AS SELECT * FROM 'entity_mentions.parquet'`
       );
+      // The reorganization sentences: 361 rows, so it rides along with the
+      // mentions rather than earning a loader of its own. An older build wrote
+      // this file empty and correctly typed, so the queries against it are the
+      // same either way.
+      await conn.query(`CREATE TABLE agency_events AS SELECT * FROM 'agency_events.parquet'`);
       await conn.query(`
         CREATE TABLE eo_entity AS
         SELECT eo_id, entity_id, count(*) AS n
