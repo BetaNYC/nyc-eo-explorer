@@ -293,7 +293,7 @@ export const MIN_SHARED = 1;
  * an agency name that is not one. They are kept in the data and the control that
  * hides them can be turned down, so a one-off body stays findable.
  */
-export const DEFAULT_MIN_ORDERS = 3;
+export const DEFAULT_MIN_ORDERS = 1;
 
 /**
  * The agencies named in one order, in the order they are first named.
