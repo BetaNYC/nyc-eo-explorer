@@ -3,7 +3,7 @@ import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { EventBus, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { useEffect, useRef, useState } from "react";
 
-import { mediaBase } from "../paths.js";
+import { assetUrl, mediaBase } from "../paths.js";
 
 import "pdfjs-dist/web/pdf_viewer.css";
 
@@ -92,7 +92,14 @@ class MediaRangeTransport extends pdfjs.PDFDataRangeTransport {
  * built-in negotiation works and is the thing worth exercising locally.
  */
 async function documentArgs(src, signal) {
-  if (!mediaBase()) return { url: src };
+  // Where pdf.js reads its JBIG2 / JPEG 2000 / qcms modules from. Not optional
+  // for these scans: the images in a bilevel book scan are JBIG2, and pdf.js
+  // has no built-in decoder for them. The trailing slash is required -- pdf.js
+  // rejects a factory url without one. Copied into the build and served in dev
+  // by the `pdfjs-wasm` plugin in vite.config.js.
+  const wasm = { wasmUrl: assetUrl("pdfjs-wasm/") };
+
+  if (!mediaBase()) return { url: src, ...wasm };
   // Strip `#page=`; it is an open parameter for a viewer, and sending it to
   // fetch would just miss the CDN cache.
   const url = src.split("#")[0];
@@ -102,9 +109,9 @@ async function documentArgs(src, signal) {
   if (!Number.isInteger(length) || length <= 0) {
     // Nothing to range against. Falling back to a whole-file fetch is slow but
     // correct, which beats failing.
-    return { url };
+    return { url, ...wasm };
   }
-  return { range: new MediaRangeTransport(length, url) };
+  return { range: new MediaRangeTransport(length, url), ...wasm };
 }
 
 export default function PdfViewer({

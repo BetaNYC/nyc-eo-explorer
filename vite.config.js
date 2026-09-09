@@ -102,11 +102,76 @@ const dataRepoMount = () => {
   };
 };
 
+/**
+ * pdf.js's image decoders, served as ordinary site files.
+ *
+ * Since v5 the JBIG2 and JPEG 2000 decoders and the qcms colour engine are
+ * separate .wasm modules that pdf.js fetches at run time from `wasmUrl` -- they
+ * are NOT inside pdf.worker.min.mjs. Without that parameter a scan whose images
+ * are JBIG2 (which is what a bilevel book scan usually is) fails to decode
+ * every image on the page and the pane renders blank:
+ *
+ *   #instantiateWasm: UnknownErrorException: Ensure that the `wasmUrl` API
+ *   parameter is provided.
+ *
+ * They cannot ride on `?url` like the worker does: pdf.js builds each filename
+ * itself (`${wasmUrl}jbig2.wasm`), so it needs a directory, not an import. This
+ * copies the directory out of node_modules into the build, and serves it from
+ * the same path in dev, so one URL works everywhere. See src/components/PdfViewer.jsx.
+ */
+const PDFJS_WASM_DIR = path.resolve(HERE, "node_modules/pdfjs-dist/wasm");
+const PDFJS_WASM_PREFIX = "/pdfjs-wasm/";
+
+const pdfjsWasm = () => {
+  // The .wasm modules plus the pure-JS fallbacks pdf.js loads when a wasm
+  // module will not instantiate. The LICENSE_* files in the same directory are
+  // not fetched at run time.
+  const names = () =>
+    fs.readdirSync(PDFJS_WASM_DIR).filter((f) => f.endsWith(".wasm") || f.endsWith(".js"));
+
+  const serve = (req, res, next) => {
+    // indexOf, not startsWith: under a subpath base the request arrives with
+    // that base in front of the prefix.
+    const at = req.url?.indexOf(PDFJS_WASM_PREFIX) ?? -1;
+    if (at < 0) return next();
+    const name = decodeURIComponent(req.url.slice(at + PDFJS_WASM_PREFIX.length).split("?")[0]);
+    if (!names().includes(name)) {
+      res.statusCode = 404;
+      return res.end("not found");
+    }
+    res.setHeader("Content-Type", name.endsWith(".wasm") ? "application/wasm" : "text/javascript");
+    fs.createReadStream(path.join(PDFJS_WASM_DIR, name))
+      .once("error", () => res.destroy())
+      .pipe(res);
+  };
+
+  return {
+    name: "pdfjs-wasm",
+    configureServer(server) {
+      server.middlewares.use(serve);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(serve);
+    },
+    generateBundle() {
+      for (const name of names()) {
+        this.emitFile({
+          type: "asset",
+          // A fixed name, not a hashed one: pdf.js constructs these URLs from
+          // the filenames it has compiled in.
+          fileName: `pdfjs-wasm/${name}`,
+          source: fs.readFileSync(path.join(PDFJS_WASM_DIR, name)),
+        });
+      }
+    },
+  };
+};
+
 export default defineConfig({
   // "/" locally; "/<repo>/" if this is ever served from a GitHub Pages project
   // site. Same convention as the sibling repo's qa-ui.
   base: process.env.VITE_BASE || "/",
-  plugins: [react(), dataRepoMount()],
+  plugins: [react(), dataRepoMount(), pdfjsWasm()],
   // qa-ui owns 5274.
   server: { port: 5275, open: true },
   optimizeDeps: {
