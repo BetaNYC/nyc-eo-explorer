@@ -303,4 +303,5 @@ Questions about our approach: hello@beta.nyc.
 The underlying executive orders are public records of the City of New York; these licenses cover this tooling and the compilation it reads.
 
 ## A note on sources
+
 Documents shown here are reproductions of public records, retrieved from official City sources and the [Internet Archive](https://archive.org) under its access guidelines. Text of the oldest orders is OCR output — faithful to the scan, not perfected — and is not legal advice; verify against the source PDF, which every record links to.
