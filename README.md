@@ -1,5 +1,7 @@
 # nyc-eo-explorer
 
+### See it live at https://betanyc.github.io/nyc-eo-explorer/
+
 > 🚧 **Work in progress.** The explorer is usable today, but the corpus underneath it is still being refined — text quality, metadata, and coverage are all in motion upstream, and data shapes may change with them. Nothing here should yet be treated as a complete or authoritative record. [Issues](../../issues) and contributions welcome.
 
 A fully static explorer for the [NYC mayoral executive orders corpus](https://github.com/BetaNYC/nyc-executive-orders)
