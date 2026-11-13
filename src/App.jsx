@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FacetPanel from "./components/FacetPanel.jsx";
+import SiteFooter from "./components/SiteFooter.jsx";
 import {
   PHASES,
   ensureEngine,
@@ -201,6 +202,7 @@ export default function App() {
     return (
       <div className="app" style={{ padding: 24 }}>
         <div className="status err">{fatal}</div>
+        <SiteFooter />
       </div>
     );
 
@@ -339,6 +341,8 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <SiteFooter />
     </div>
   );
 }

@@ -93,6 +93,24 @@ select {
   font-weight: 600;
 }
 
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  padding: 4px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* 44px tall targets, per BetaNYC's accessibility standard. */
+.site-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--ink);
+  text-decoration: underline;
+}
+
 .main {
   flex: 1;
   display: flex;

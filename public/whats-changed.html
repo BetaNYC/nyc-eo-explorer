@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What&#x27;s changed - NYC Executive Orders</title>
+<style>
+body{margin:0;font-family:Poppins,system-ui,sans-serif;color:#414141;background:#fff}
+.wc-skip{position:absolute;left:-999px;top:0;background:#2359a8;color:#fff;padding:.75rem 1rem}
+.wc-skip:focus{left:0}
+header,main,footer{max-width:750px;margin:0 auto;padding:1rem}
+header a,footer a{color:#2359a8}
+h1,h2{font-family:Roboto,system-ui,sans-serif}
+</style>
+</head>
+<body>
+<a class="wc-skip" href="#main">Skip to main content</a>
+<header>
+<nav aria-label="Site"><a href="./">NYC Executive Orders home</a></nav>
+</header>
+<main id="main">
+<div class="whats-changed" data-whats-changed>
+<style>
+.whats-changed{color:#414141;font-size:1.0625rem;line-height:1.76;max-width:750px;overflow-wrap:anywhere}
+.whats-changed a{color:#2359a8;text-decoration:underline}
+.whats-changed a:focus-visible,.whats-changed input:focus-visible{outline:3px solid #2359a8;outline-offset:2px}
+.whats-changed fieldset{border:1px solid #949494;border-radius:4px;margin:1.5rem 0 .5rem;padding:.25rem 1rem .5rem}
+.whats-changed legend{font-weight:700;padding:0 .25rem}
+.whats-changed .wc-option{display:inline-flex;align-items:center;gap:.5rem;min-height:44px;margin-right:1.25rem;cursor:pointer}
+.whats-changed .wc-option input{width:1.25rem;height:1.25rem;margin:0;accent-color:#2359a8}
+.whats-changed .wc-status{font-style:italic}
+.whats-changed .wc-entry{border-top:1px solid #949494;padding:1.5rem 0 .5rem}
+.whats-changed .wc-entry[hidden]{display:none}
+.whats-changed .wc-entry h2{font-size:1.5rem;line-height:1.35;margin:0 0 .25rem}
+.whats-changed .wc-meta{margin:0 0 .75rem}
+.whats-changed .wc-tag{display:inline-block;border:1px solid #414141;border-radius:4px;padding:0 .5rem;margin:0 .375rem .25rem 0;line-height:1.6}
+.whats-changed .wc-tag-correction{border:2px solid #2359a8;color:#2359a8;font-weight:700}
+.whats-changed .wc-old-numbers{background:#EEF4FF;border-left:4px solid #2359a8;padding:.75rem 1rem;margin:1rem 0}
+.whats-changed .wc-old-numbers p{margin:0}
+.whats-changed .wc-permalink a{display:inline-block;min-height:44px;line-height:44px}
+.whats-changed .wc-visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media (max-width:600px){.whats-changed .wc-entry h2{font-size:1.25rem}}
+</style>
+<h1>What&#x27;s changed</h1>
+<div class="wc-intro">
+<p>This page lists the changes to the NYC Executive Orders explorer that a reader would notice: new tabs and tools, fixes, and corrections when we published something wrong. Newest first. The orders themselves come from BetaNYC&#x27;s executive orders corpus, which is still being checked and filled in, so routine updates to the orders are not listed here.</p>
+<ul><li><strong>History begins:</strong> 2026-08-18, the day the explorer went live. Corrections made before this date may be missing.</li><li><strong>Data refresh:</strong> whenever the site is rebuilt, from the latest copy of the corpus. There is no fixed schedule.</li></ul>
+<p>To report a bug in this site or ask for a new feature, open an issue at https://github.com/BetaNYC/nyc-eo-explorer/issues.</p>
+</div>
+<div class="wc-filters" hidden>
+<fieldset>
+<legend>Show changes to</legend>
+<label class="wc-option"><input type="checkbox" name="wc-tag" value="Site" checked> Site</label>
+<label class="wc-option"><input type="checkbox" name="wc-tag" value="Data" checked> Data</label>
+<label class="wc-option"><input type="checkbox" name="wc-tag" value="MCP" checked> MCP</label>
+<label class="wc-option"><input type="checkbox" name="wc-corrections" value="Correction"> Corrections only</label>
+</fieldset>
+</div>
+<p class="wc-status" role="status" aria-live="polite" aria-atomic="true">Showing all 5 changes.</p>
+<article class="wc-entry" id="2026-09-09-scans-that-showed-a-blank-page-now-show" data-tags="Site" aria-labelledby="2026-09-09-scans-that-showed-a-blank-page-now-show-title">
+<h2 id="2026-09-09-scans-that-showed-a-blank-page-now-show-title">Scans that showed a blank page now show</h2>
+<p class="wc-meta"><time datetime="2026-09-09">September 9, 2026</time></p>
+<p class="wc-tags"><span class="wc-visually-hidden">Tags: </span><span class="wc-tag">Site</span></p>
+<p>When you opened an order, some scanned source pages showed up blank in the viewer beside the text. The viewer now loads the image decoders those scans need, so the page images show.</p>
+<p><strong>More detail:</strong> <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/1cf14c609bbdffa01ae6efaa2ee8d14e5739c37d">The fix</a></p>
+<p class="wc-permalink"><a href="#2026-09-09-scans-that-showed-a-blank-page-now-show">Link to this change<span class="wc-visually-hidden">: Scans that showed a blank page now show</span></a></p>
+</article>
+<article class="wc-entry" id="2026-09-08-new-agencies-tab-shows-which-orders-name-each-city-agency" data-tags="Site Data" aria-labelledby="2026-09-08-new-agencies-tab-shows-which-orders-name-each-city-agency-title">
+<h2 id="2026-09-08-new-agencies-tab-shows-which-orders-name-each-city-agency-title">New Agencies tab shows which orders name each City agency</h2>
+<p class="wc-meta"><time datetime="2026-09-08">September 8, 2026</time></p>
+<p class="wc-tags"><span class="wc-visually-hidden">Tags: </span><span class="wc-tag">Site</span><span class="wc-visually-hidden">, </span><span class="wc-tag">Data</span></p>
+<p>A new Agencies tab lists every City agency or office the orders name, with a page for each one: the orders that name it, year by year, and the agencies most often named alongside it. Names that match BetaNYC&#x27;s list of current agencies are marked Confirmed. Other names, including bodies that no longer exist, are marked Proposed, because nobody has reviewed them yet.</p>
+<p><strong>Who it affects:</strong> Anyone looking up an agency&#x27;s history in the orders. The list shows every name it found, including names seen in only one order.</p>
+<p><strong>More detail:</strong> <a href="https://github.com/BetaNYC/nyc-eo-explorer/blob/HEAD/README.md#agencies">How the Agencies tab works</a> · <a href="https://github.com/BetaNYC/nyc-executive-orders/pull/18">The agency data, added to the corpus</a> · <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/2bba1f5">The tab</a> · <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/45b3273">Show every name</a></p>
+<p class="wc-permalink"><a href="#2026-09-08-new-agencies-tab-shows-which-orders-name-each-city-agency">Link to this change<span class="wc-visually-hidden">: New Agencies tab shows which orders name each City agency</span></a></p>
+</article>
+<article class="wc-entry" id="2026-09-01-search-results-come-in-pages-and-links-keep-your-filters" data-tags="Site" aria-labelledby="2026-09-01-search-results-come-in-pages-and-links-keep-your-filters-title">
+<h2 id="2026-09-01-search-results-come-in-pages-and-links-keep-your-filters-title">Search results come in pages, and links keep your filters</h2>
+<p class="wc-meta"><time datetime="2026-09-01">September 1, 2026</time></p>
+<p class="wc-tags"><span class="wc-visually-hidden">Tags: </span><span class="wc-tag">Site</span></p>
+<p>Search results now come in pages you can step through. Clicking a link inside the explorer no longer clears your filters, and you can open a link in a new tab.</p>
+<p><strong>More detail:</strong> <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/8f991b6">Pages of results</a> · <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/5ca422c">Links</a></p>
+<p class="wc-permalink"><a href="#2026-09-01-search-results-come-in-pages-and-links-keep-your-filters">Link to this change<span class="wc-visually-hidden">: Search results come in pages, and links keep your filters</span></a></p>
+</article>
+<article class="wc-entry" id="2026-08-31-the-back-button-returns-you-to-where-you-were" data-tags="Site" aria-labelledby="2026-08-31-the-back-button-returns-you-to-where-you-were-title">
+<h2 id="2026-08-31-the-back-button-returns-you-to-where-you-were-title">The Back button returns you to where you were</h2>
+<p class="wc-meta"><time datetime="2026-08-31">August 31, 2026</time></p>
+<p class="wc-tags"><span class="wc-visually-hidden">Tags: </span><span class="wc-tag">Site</span></p>
+<p>The browser&#x27;s Back button now takes you to the page you were on before, with your filters still set.</p>
+<p><strong>More detail:</strong> <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/60f72ee">The fix</a></p>
+<p class="wc-permalink"><a href="#2026-08-31-the-back-button-returns-you-to-where-you-were">Link to this change<span class="wc-visually-hidden">: The Back button returns you to where you were</span></a></p>
+</article>
+<article class="wc-entry" id="2026-08-18-the-explorer-went-live" data-tags="Site Data" aria-labelledby="2026-08-18-the-explorer-went-live-title">
+<h2 id="2026-08-18-the-explorer-went-live-title">The explorer went live</h2>
+<p class="wc-meta"><time datetime="2026-08-18">August 18, 2026</time></p>
+<p class="wc-tags"><span class="wc-visually-hidden">Tags: </span><span class="wc-tag">Site</span><span class="wc-visually-hidden">, </span><span class="wc-tag">Data</span></p>
+<p>A free website to search and browse New York City mayoral executive orders, with no account needed. Search the full text of every order, filter by mayor and year, and read each order beside a scan of the original. A Pictures tab shows the seals and signatures clipped from the oldest scans.</p>
+<p><strong>More detail:</strong> <a href="https://github.com/BetaNYC/nyc-eo-explorer/blob/HEAD/README.md">About the explorer</a> · <a href="https://github.com/BetaNYC/nyc-eo-explorer/commit/e736363">The first version</a></p>
+<p class="wc-permalink"><a href="#2026-08-18-the-explorer-went-live">Link to this change<span class="wc-visually-hidden">: The explorer went live</span></a></p>
+</article>
+<script>
+(function () {
+  var roots = document.querySelectorAll("[data-whats-changed]");
+  Array.prototype.forEach.call(roots, function (root) {
+    var box = root.querySelector(".wc-filters");
+    var status = root.querySelector(".wc-status");
+    var entries = root.querySelectorAll(".wc-entry");
+    if (!box || !status || !entries.length) return;
+    var tagBoxes = box.querySelectorAll("input[name='wc-tag']");
+    var corrBox = box.querySelector("input[name='wc-corrections']");
+    var total = entries.length;
+    var noun = total === 1 ? "change" : "changes";
+    function apply() {
+      var on = {};
+      Array.prototype.forEach.call(tagBoxes, function (b) { on[b.value] = b.checked; });
+      var shown = 0;
+      Array.prototype.forEach.call(entries, function (el) {
+        var tags = (el.getAttribute("data-tags") || "").split(" ");
+        var ok = tags.some(function (t) { return on[t]; });
+        if (corrBox.checked && tags.indexOf("Correction") < 0) ok = false;
+        el.hidden = !ok;
+        if (ok) shown++;
+      });
+      status.textContent = shown === total
+        ? "Showing all " + total + " " + noun + "."
+        : "Showing " + shown + " of " + total + " " + noun + ".";
+    }
+    function reveal() {
+      var id = decodeURIComponent(location.hash.slice(1));
+      var el = id && document.getElementById(id);
+      if (el && root.contains(el) && el.closest(".wc-entry[hidden]")) {
+        Array.prototype.forEach.call(tagBoxes, function (b) { b.checked = true; });
+        corrBox.checked = false;
+        apply();
+        el.scrollIntoView();
+      }
+    }
+    box.addEventListener("change", apply);
+    window.addEventListener("hashchange", reveal);
+    box.hidden = false;
+  });
+})();
+</script>
+</div>
+</main>
+<footer>
+<p>Built by BetaNYC, a project of the Fund for the City of New York. <a href="https://github.com/BetaNYC/nyc-eo-explorer/issues">Report a bug on this site or ask for a new feature</a></p>
+</footer>
+</body>
+</html>
