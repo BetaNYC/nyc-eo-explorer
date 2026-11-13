@@ -71,7 +71,9 @@ describe("What's changed", () => {
       expect(doc.querySelector(sel), sel).not.toBeNull();
     const articles = doc.querySelectorAll("main article");
     expect(articles.length).toBeGreaterThan(0);
-    expect(doc.querySelectorAll("article time[datetime]").length).toBe(articles.length);
+    // Every entry has a date; an Update line adds its own <time>, so check each one.
+    for (const article of articles)
+      expect(article.querySelector("time[datetime]"), article.id).not.toBeNull();
     expect(doc.querySelector("fieldset legend")?.textContent).toBe("Show changes to");
     expect(doc.querySelector('[role="status"][aria-live="polite"]')).not.toBeNull();
     // The link home must stay relative, so it works under /nyc-eo-explorer/.
