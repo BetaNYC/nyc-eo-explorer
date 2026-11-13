@@ -62,20 +62,36 @@ describe("What's changed", () => {
     );
   });
 
-  it("the page has the accessible structure the standard asks for", () => {
+  // Counts come from the parsed file, not from constants, so an Update line or
+  // an `Unreleased:` entry (which has no date yet) does not break the test.
+  it.skipIf(!python)("the page has the accessible structure the standard asks for", () => {
+    const parsed = JSON.parse(
+      execFileSync("python3", ["scripts/whats_changed.py", "json", "WHATS-CHANGED.md"], {
+        cwd: ROOT,
+        encoding: "utf8",
+      })
+    );
+    const entries = parsed.entries.filter((e) => e.valid);
     const doc = new DOMParser().parseFromString(readFileSync(PAGE, "utf8"), "text/html");
     const h1s = doc.querySelectorAll("h1");
     expect(h1s.length).toBe(1);
     expect(h1s[0].textContent).toBe("What's changed");
-    for (const sel of ["header", "nav", "main", "footer", 'a[href="#main"], a.skip-link'])
+    for (const sel of ["header", "nav", "main", "footer", 'a[href="#main"]'])
       expect(doc.querySelector(sel), sel).not.toBeNull();
-    const articles = doc.querySelectorAll("main article");
-    expect(articles.length).toBeGreaterThan(0);
-    // Every entry has a date; an Update line adds its own <time>, so check each one.
-    for (const article of articles)
-      expect(article.querySelector("time[datetime]"), article.id).not.toBeNull();
+    expect(doc.querySelectorAll("main article").length).toBe(entries.length);
+    for (const e of entries) {
+      const article = doc.getElementById(e.anchor);
+      expect(article, e.anchor).not.toBeNull();
+      if (!e.unreleased)
+        expect(article.querySelector(`time[datetime="${e.date}"]`), e.anchor).not.toBeNull();
+    }
     expect(doc.querySelector("fieldset legend")?.textContent).toBe("Show changes to");
     expect(doc.querySelector('[role="status"][aria-live="polite"]')).not.toBeNull();
+    // The "Corrections only" box is there only when the file has a correction.
+    const hasCorrection = entries.some((e) => e.tags.includes("Correction"));
+    expect(doc.querySelector("fieldset").textContent.includes("Corrections only")).toBe(
+      hasCorrection
+    );
     // The link home must stay relative, so it works under /nyc-eo-explorer/.
     expect(doc.querySelector('nav a[href="./"]')).not.toBeNull();
   });

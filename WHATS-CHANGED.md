@@ -7,10 +7,16 @@ This page lists the changes to the NYC Executive Orders explorer that a reader w
 
 To report a bug in this site or ask for a new feature, open an issue at https://github.com/BetaNYC/nyc-eo-explorer/issues.
 
+## 2026-11-12: A page that lists what has changed
+
+- **Tags:** Site
+- **What changed:** This page is new. It lists the changes to the explorer that a reader would notice, newest first, and every page of the explorer links to it at the bottom.
+- **More detail:** [The same list on GitHub](WHATS-CHANGED.md)
+
 ## 2026-09-09: Scans that showed a blank page now show
 
 - **Tags:** Site
-- **What changed:** When you opened an order, some scanned source pages showed up blank in the viewer beside the text. The viewer now loads the image decoders those scans need, so the page images show.
+- **What changed:** When you opened an order, some scanned source pages had shown up blank in the viewer beside the text since launch. The viewer now loads the image decoders those scans need, so the page images show.
 - **More detail:** [The fix](https://github.com/BetaNYC/nyc-eo-explorer/commit/1cf14c609bbdffa01ae6efaa2ee8d14e5739c37d)
 
 ## 2026-09-08: New Agencies tab shows which orders name each City agency
@@ -35,5 +41,5 @@ To report a bug in this site or ask for a new feature, open an issue at https://
 ## 2026-08-18: The explorer went live
 
 - **Tags:** Site, Data
-- **What changed:** A free website to search and browse New York City mayoral executive orders, with no account needed. Search the full text of every order, filter by mayor and year, and read each order beside a scan of the original. A Pictures tab shows the seals and signatures clipped from the oldest scans.
+- **What changed:** A free website to search and browse New York City mayoral executive orders, with no account needed. Search the full text of every order in BetaNYC's corpus, filter by mayor and year, and read each order beside a scan of the original. A Pictures tab shows the seals and signatures clipped from the oldest scans.
 - **More detail:** [About the explorer](README.md) · [The first version](https://github.com/BetaNYC/nyc-eo-explorer/commit/e736363)
